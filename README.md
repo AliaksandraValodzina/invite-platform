@@ -41,17 +41,31 @@ module owns its strict checks.
 
 ## CI
 
-`static` (typecheck, lint, format, unit tests) runs on every pull request.
-`playwright smoke` runs only when a changed file could affect what it exercises,
-and always on pushes to main. `CI gate` is the single required status check.
+`static` (typecheck, lint, format, unit tests) runs on every pull request and
+also decides whether Playwright is needed. `playwright smoke` runs only when a
+changed file could affect what it exercises, and always on pushes to main.
+`CI gate` is the single required status check.
 
 Set branch protection to require **`CI gate`**, not the individual jobs.
 Requiring `playwright smoke` directly would block every pull request where it is
-legitimately skipped. The gate compares the decision the `changes` job made
-against what actually happened, so a job that was skipped when it should have
-run makes it red. Its logic lives in `.github/scripts/ci-gate.sh` and is covered
-by `.github/scripts/ci-gate.test.sh`, which the `static` job runs.
+legitimately skipped. The gate reads the whole `needs` context and requires every
+job in it to have succeeded, with the single exception of a job explicitly
+declared conditional, which is checked against the decision made about it. A job
+that was skipped when it should have run makes it red. Its logic lives in
+`.github/scripts/ci-gate.sh` and is covered by `.github/scripts/ci-gate.test.sh`,
+which the `static` job runs.
 
 Every job reports its wall clock duration and the gate prints a cost table with
 billed minutes. GitHub rounds each job up to a whole minute, so the billed column
-is what a private repo is actually charged.
+is what a private repo is actually charged, and job count is a direct cost.
+
+### Adding to CI
+
+`.github/workflows/ci.yml` is owned by one task at a time. If your work needs CI
+to do something new, such as a Postgres service container for migrations and RLS
+policy tests, send the requirement rather than editing the workflow. There is a
+worked example of how a database job slots in at the bottom of that file.
+
+Adding a job to the gate's `needs` is all that is required to make it enforced.
+The gate requires unlisted jobs to succeed by default, so forgetting to teach it
+about a new job makes the check stricter, never weaker.
