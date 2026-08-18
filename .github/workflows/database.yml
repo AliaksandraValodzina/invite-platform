@@ -5,32 +5,61 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  group: database-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned for the same reason the Node version is pinned in ci.yml: a CLI
+  # release must not be able to change the result of a green run. `latest` also
+  # resolves through the GitHub API on every run, which is rate limited.
+  SUPABASE_CLI_VERSION: '2.115.0'
+
 jobs:
   schema:
     name: migrations, policies and retention
     runs-on: ubuntu-latest
 
+    # No path filter and no conditional jobs, deliberately. A `paths:` filter on
+    # a required check means the check never reports on a pull request that does
+    # not touch those paths, which blocks the pull request rather than passing
+    # it. A conditional job means a skipped job has to be told apart from a
+    # passing one. This workflow is one unconditional job so neither failure
+    # mode exists: it either ran and passed, or the pull request is red.
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Record start time
+        run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
+      - uses: actions/checkout@v5
 
-      - uses: supabase/setup-cli@v1
+      - uses: actions/setup-node@v6
         with:
-          version: latest
+          node-version: '24.10.0'
+
+      - uses: supabase/setup-cli@v3
+        with:
+          version: ${{ env.SUPABASE_CLI_VERSION }}
 
       # Every migration is applied to an empty database, so a migration that
       # only works against a database someone had already touched fails here.
       # Studio and the services this suite does not exercise are excluded to
-      # keep the run quick; the API gateway, PostgREST and the auth server stay
+      # keep the run short; the API gateway, PostgREST and the auth server stay,
       # because the anonymous access check goes through all three.
       - name: Start Supabase
-        run: supabase start -x studio,imgproxy,realtime,storage-api,logflare,vector,edge-runtime,postgres-meta,supavisor
+        run: |
+          echo "STEP_START=$(date +%s)" >> "$GITHUB_ENV"
+          supabase start -x studio,imgproxy,realtime,storage-api,logflare,vector,edge-runtime,postgres-meta,supavisor
 
+      - name: Report Supabase start duration
+        run: echo "### supabase start: $(( $(date +%s) - STEP_START ))s" >> "$GITHUB_STEP_SUMMARY"
+
+      # --fail-on is load bearing. Without it `supabase db lint` prints its
+      # findings and exits 0, so the step would report a broken function and
+      # still go green. Verified both ways: 0 on a clean schema, 1 on a function
+      # with an unresolvable column.
       - name: Lint schema
-        run: supabase db lint --level warning
+        run: supabase db lint --level warning --fail-on warning
 
       - name: Schema, constraints and retention (pgTAP)
         run: supabase test db
@@ -39,6 +68,10 @@ jobs:
       # signed-in client who is not the owner, against a seeded database.
       - name: Anonymous access is impossible
         run: node scripts/check-anon-access.mjs
+
+      - name: Report job duration
+        if: ${{ !cancelled() }}
+        run: echo "### database job total: $(( $(date +%s) - JOB_START ))s" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Stop Supabase
         if: always()
