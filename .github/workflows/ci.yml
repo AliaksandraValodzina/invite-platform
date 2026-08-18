@@ -24,6 +24,9 @@ jobs:
     outputs:
       e2e: ${{ steps.filter.outputs.e2e }}
     steps:
+      - name: Record start time
+        run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
@@ -57,6 +60,11 @@ jobs:
             echo "Playwright skipped: no file it can exercise changed."
           fi
 
+      - name: Report job duration
+        if: ${{ !cancelled() }}
+        run: |
+          echo "### changes: $(( $(date +%s) - JOB_START ))s" >> "$GITHUB_STEP_SUMMARY"
+
   static:
     name: typecheck, lint, format, unit tests
     runs-on: ubuntu-latest
@@ -77,6 +85,12 @@ jobs:
       - run: npm run lint
       - run: npm run format
       - run: npm test
+
+      # The gate decides whether a pull request can merge, so its logic is
+      # tested like anything else. No dependencies, so it adds no measurable
+      # time to this job.
+      - name: Test the CI gate logic
+        run: bash .github/scripts/ci-gate.test.sh
 
       - name: Report job duration
         if: ${{ !cancelled() }}
@@ -126,19 +140,41 @@ jobs:
         run: |
           echo "### e2e: $(( $(date +%s) - JOB_START ))s" >> "$GITHUB_STEP_SUMMARY"
 
-  # Single required status check. It stays green when e2e is deliberately
-  # skipped, and goes red if any job it depends on failed or was cancelled.
+  # Single required status check.
+  #
+  # It stays green when e2e is deliberately skipped by the path filter, and red
+  # in every other case, including the one that matters: e2e skipped when the
+  # filter said it was required. Enumerating 'failure' and 'cancelled' cannot
+  # catch that, because 'skipped' is neither, so the gate compares the decision
+  # the changes job made against what actually happened. See
+  # .github/scripts/ci-gate.sh, and ci-gate.test.sh for the cases it refuses.
   gate:
     name: CI gate
     if: ${{ always() }}
     needs: [changes, static, e2e]
     runs-on: ubuntu-latest
     steps:
-      - name: Fail if any job did not succeed
-        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
-        run: exit 1
+      - name: Record start time
+        run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
 
-      - name: Summarise
+      - uses: actions/checkout@v5
+
+      # Unconditional. A gate whose failure depends on an `if:` expression
+      # evaluating correctly is a gate that passes when the expression is wrong.
+      - name: Check every job against the decision that was made
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          STATIC_RESULT: ${{ needs.static.result }}
+          E2E_RESULT: ${{ needs.e2e.result }}
+          E2E_DECISION: ${{ needs.changes.outputs.e2e }}
+        shell: bash
         run: |
-          echo "static: ${{ needs.static.result }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "e2e: ${{ needs.e2e.result }}" >> "$GITHUB_STEP_SUMMARY"
+          # pipefail, because the default shell is `bash -e` without it and the
+          # pipe would hand the step tee's exit code instead of the gate's.
+          set -o pipefail
+          bash .github/scripts/ci-gate.sh | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Report job duration
+        if: ${{ !cancelled() }}
+        run: |
+          echo "### gate: $(( $(date +%s) - JOB_START ))s" >> "$GITHUB_STEP_SUMMARY"
