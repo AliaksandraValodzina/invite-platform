@@ -23,6 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       e2e: ${{ steps.filter.outputs.e2e }}
+      duration: ${{ steps.duration.outputs.seconds }}
     steps:
       - name: Record start time
         run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
@@ -45,9 +46,24 @@ jobs:
             exit 0
           fi
 
-          changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
+          # Diff from the merge base, not from the base tip. Diffing against the
+          # tip also picks up commits that landed on main after this branch was
+          # cut, which would run Playwright for changes that are not ours.
+          merge_base=$(git merge-base "$BASE_SHA" "$HEAD_SHA")
+          changed=$(git diff --name-only "$merge_base" "$HEAD_SHA")
+
+          echo "Merge base: $merge_base"
           echo "Changed files:"
           echo "$changed"
+
+          # An empty diff matches nothing, which the filter below would read as
+          # "skip". That is the one shape where a filter bug hides a regression,
+          # so an empty diff runs Playwright rather than trusting the filter.
+          if [ -z "$changed" ]; then
+            echo "Empty diff, running Playwright rather than trusting the filter."
+            echo "e2e=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           # Anything that can alter rendered output, routing, the build, or the
           # browser suite itself. Docs, unit tests and lint config are excluded
@@ -61,13 +77,18 @@ jobs:
           fi
 
       - name: Report job duration
+        id: duration
         if: ${{ !cancelled() }}
         run: |
-          echo "### changes: $(( $(date +%s) - JOB_START ))s" >> "$GITHUB_STEP_SUMMARY"
+          seconds=$(( $(date +%s) - JOB_START ))
+          echo "seconds=$seconds" >> "$GITHUB_OUTPUT"
+          echo "changes finished in ${seconds}s" >> "$GITHUB_STEP_SUMMARY"
 
   static:
     name: typecheck, lint, format, unit tests
     runs-on: ubuntu-latest
+    outputs:
+      duration: ${{ steps.duration.outputs.seconds }}
     steps:
       - name: Record start time
         run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
@@ -93,15 +114,20 @@ jobs:
         run: bash .github/scripts/ci-gate.test.sh
 
       - name: Report job duration
+        id: duration
         if: ${{ !cancelled() }}
         run: |
-          echo "### static: $(( $(date +%s) - JOB_START ))s" >> "$GITHUB_STEP_SUMMARY"
+          seconds=$(( $(date +%s) - JOB_START ))
+          echo "seconds=$seconds" >> "$GITHUB_OUTPUT"
+          echo "static finished in ${seconds}s" >> "$GITHUB_STEP_SUMMARY"
 
   e2e:
     name: playwright smoke
     needs: changes
     if: ${{ needs.changes.outputs.e2e == 'true' }}
     runs-on: ubuntu-latest
+    outputs:
+      duration: ${{ steps.duration.outputs.seconds }}
     steps:
       - name: Record start time
         run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
@@ -120,10 +146,29 @@ jobs:
       - name: Build
         run: npm run build
 
+      # Downloading chromium is the single most expensive step in the whole
+      # gate. Measured locally at 113s cold against 3s warm, which on a metered
+      # private repo is worth about two billed minutes per run. The key is the
+      # lockfile hash, so pinning a new Playwright invalidates it automatically.
+      - name: Cache Playwright browser
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
       # Only chromium, and only its own dependencies. Installing all three
       # browser engines here would roughly triple the slowest step in the gate.
-      - name: Install Playwright browser
+      - name: Install Playwright browser and OS dependencies
+        if: ${{ steps.playwright-cache.outputs.cache-hit != 'true' }}
         run: npx playwright install --with-deps chromium
+
+      # The binary came from the cache, but the OS libraries it links against
+      # belong to the runner image rather than the cached directory, so they
+      # still have to be ensured. This is the cheap path.
+      - name: Install Playwright OS dependencies only
+        if: ${{ steps.playwright-cache.outputs.cache-hit == 'true' }}
+        run: npx playwright install-deps chromium
 
       - name: Run Playwright smoke tests
         run: npm run test:e2e
@@ -136,9 +181,12 @@ jobs:
           retention-days: 7
 
       - name: Report job duration
+        id: duration
         if: ${{ !cancelled() }}
         run: |
-          echo "### e2e: $(( $(date +%s) - JOB_START ))s" >> "$GITHUB_STEP_SUMMARY"
+          seconds=$(( $(date +%s) - JOB_START ))
+          echo "seconds=$seconds" >> "$GITHUB_OUTPUT"
+          echo "e2e finished in ${seconds}s" >> "$GITHUB_STEP_SUMMARY"
 
   # Single required status check.
   #
@@ -174,7 +222,54 @@ jobs:
           set -o pipefail
           bash .github/scripts/ci-gate.sh | tee -a "$GITHUB_STEP_SUMMARY"
 
-      - name: Report job duration
-        if: ${{ !cancelled() }}
+      # Runs even when the gate above went red, so a failing run still reports
+      # what it cost. A later step succeeding does not clear an earlier failure,
+      # so this cannot turn a red gate green.
+      #
+      # This repo is private, so minutes are metered and GitHub rounds every job
+      # up to a whole minute. The billed column, not the wall clock column, is
+      # what the bill is made of, and a skipped job costs nothing at all.
+      - name: Report what this run cost
+        if: ${{ always() }}
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          CHANGES_SECONDS: ${{ needs.changes.outputs.duration }}
+          STATIC_RESULT: ${{ needs.static.result }}
+          STATIC_SECONDS: ${{ needs.static.outputs.duration }}
+          E2E_RESULT: ${{ needs.e2e.result }}
+          E2E_SECONDS: ${{ needs.e2e.outputs.duration }}
+        shell: bash
         run: |
-          echo "### gate: $(( $(date +%s) - JOB_START ))s" >> "$GITHUB_STEP_SUMMARY"
+          set -uo pipefail
+
+          gate_seconds=$(( $(date +%s) - JOB_START ))
+          total=0
+
+          row () { # name result seconds
+            local name=$1 result=$2 seconds=${3:-} mins shown
+            if [ "$result" = "skipped" ]; then
+              echo "| $name | skipped | not run | 0 |"
+              return
+            fi
+            # A job that died before its reporting step leaves this empty, so
+            # say so rather than printing a confident zero.
+            if [ -z "$seconds" ]; then shown="unknown"; else shown="${seconds}s"; fi
+            mins=$(( ( ${seconds:-0} + 59 ) / 60 ))
+            total=$(( total + mins ))
+            echo "| $name | $result | $shown | $mins |"
+          }
+
+          {
+            echo "## What this run cost"
+            echo ""
+            echo "| Job | Result | Wall clock | Billed minutes |"
+            echo "| --- | --- | --- | --- |"
+            row "changes" "$CHANGES_RESULT" "$CHANGES_SECONDS"
+            row "static"  "$STATIC_RESULT"  "$STATIC_SECONDS"
+            row "e2e"     "$E2E_RESULT"     "$E2E_SECONDS"
+            row "gate"    "success"         "$gate_seconds"
+            echo ""
+            echo "**Total billed: ${total} minute(s).**"
+            echo ""
+            echo "GitHub rounds each job up to a whole minute, so four short jobs cost four minutes regardless of how fast they were. Skipped jobs are not billed."
+          } >> "$GITHUB_STEP_SUMMARY"

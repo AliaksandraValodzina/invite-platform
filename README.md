@@ -44,4 +44,14 @@ module owns its strict checks.
 `static` (typecheck, lint, format, unit tests) runs on every pull request.
 `playwright smoke` runs only when a changed file could affect what it exercises,
 and always on pushes to main. `CI gate` is the single required status check.
-The reasoning is in the comments at the top of the workflow.
+
+Set branch protection to require **`CI gate`**, not the individual jobs.
+Requiring `playwright smoke` directly would block every pull request where it is
+legitimately skipped. The gate compares the decision the `changes` job made
+against what actually happened, so a job that was skipped when it should have
+run makes it red. Its logic lives in `.github/scripts/ci-gate.sh` and is covered
+by `.github/scripts/ci-gate.test.sh`, which the `static` job runs.
+
+Every job reports its wall clock duration and the gate prints a cost table with
+billed minutes. GitHub rounds each job up to a whole minute, so the billed column
+is what a private repo is actually charged.
