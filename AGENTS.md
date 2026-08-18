@@ -21,7 +21,9 @@ Exit criteria, in the captain's words: *seed a template JSON by hand, create an 
 
 ## Rules that are expensive to change later
 
-These are the reason Phase 0 exists. Treat them as binding.
+These are the reason Phase 0 exists. Treat them as binding. How the schema
+implements them, and the reasoning behind slugs, timezone storage, hosting
+expiry and RSVP retention, is in `docs/data-model.md`.
 
 - **Every table carries `owner_id` and has RLS from the first migration**, even though v1 is single-tenant. Retrofitting tenancy is the most painful migration in this kind of product.
 - **Schema lives in migrations in this repo, managed by the Supabase CLI. Never edit schema in the dashboard.** A dashboard edit is a change nobody can review and no environment can reproduce.

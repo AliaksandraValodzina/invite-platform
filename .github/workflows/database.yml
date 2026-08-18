@@ -1,0 +1,45 @@
+name: database
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  schema:
+    name: migrations, policies and retention
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      # Every migration is applied to an empty database, so a migration that
+      # only works against a database someone had already touched fails here.
+      # Studio and the services this suite does not exercise are excluded to
+      # keep the run quick; the API gateway, PostgREST and the auth server stay
+      # because the anonymous access check goes through all three.
+      - name: Start Supabase
+        run: supabase start -x studio,imgproxy,realtime,storage-api,logflare,vector,edge-runtime,postgres-meta,supavisor
+
+      - name: Lint schema
+        run: supabase db lint --level warning
+
+      - name: Schema, constraints and retention (pgTAP)
+        run: supabase test db
+
+      # The one that matters most. Drives a real anonymous HTTP client, and a
+      # signed-in client who is not the owner, against a seeded database.
+      - name: Anonymous access is impossible
+        run: node scripts/check-anon-access.mjs
+
+      - name: Stop Supabase
+        if: always()
+        run: supabase stop --no-backup
