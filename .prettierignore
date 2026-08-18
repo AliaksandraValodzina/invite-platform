@@ -1,0 +1,12 @@
+.next/
+node_modules/
+playwright-report/
+test-results/
+coverage/
+package-lock.json
+next-env.d.ts
+
+# The contract docs are hand written and their formatting is deliberate.
+AGENTS.md
+CLAUDE.md
+.claude/

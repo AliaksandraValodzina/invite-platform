@@ -1,0 +1,144 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned so a Node release cannot change the result of a green run.
+  NODE_VERSION: '24.10.0'
+
+jobs:
+  # This repo is private, so Actions minutes are metered. Playwright is the
+  # expensive job because it pays for a build and a browser download before it
+  # runs a single assertion, so it is skipped on pull requests that cannot
+  # possibly change what it exercises. Pushes to main always run it.
+  changes:
+    name: detect changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      e2e: ${{ steps.filter.outputs.e2e }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Decide whether Playwright can exercise this diff
+        id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "Not a pull request, running the full suite."
+            echo "e2e=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
+          echo "Changed files:"
+          echo "$changed"
+
+          # Anything that can alter rendered output, routing, the build, or the
+          # browser suite itself. Docs, unit tests and lint config are excluded
+          # on purpose: they are already covered by the static job.
+          if echo "$changed" | grep -Eq '^(src/|public/|tests/e2e/|playwright\.config\.ts$|next\.config\.ts$|postcss\.config\.mjs$|package\.json$|package-lock\.json$|\.github/workflows/ci\.yml$)'; then
+            echo "e2e=true" >> "$GITHUB_OUTPUT"
+            echo "Playwright will run."
+          else
+            echo "e2e=false" >> "$GITHUB_OUTPUT"
+            echo "Playwright skipped: no file it can exercise changed."
+          fi
+
+  static:
+    name: typecheck, lint, format, unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Record start time
+        run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run format
+      - run: npm test
+
+      - name: Report job duration
+        if: ${{ !cancelled() }}
+        run: |
+          echo "### static: $(( $(date +%s) - JOB_START ))s" >> "$GITHUB_STEP_SUMMARY"
+
+  e2e:
+    name: playwright smoke
+    needs: changes
+    if: ${{ needs.changes.outputs.e2e == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Record start time
+        run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+
+      # No Supabase project and no Vercel link exist yet, so the build runs with
+      # no service variables set. That is the state it has to succeed in.
+      - name: Build
+        run: npm run build
+
+      # Only chromium, and only its own dependencies. Installing all three
+      # browser engines here would roughly triple the slowest step in the gate.
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright smoke tests
+        run: npm run test:e2e
+
+      - uses: actions/upload-artifact@v5
+        if: ${{ failure() }}
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
+      - name: Report job duration
+        if: ${{ !cancelled() }}
+        run: |
+          echo "### e2e: $(( $(date +%s) - JOB_START ))s" >> "$GITHUB_STEP_SUMMARY"
+
+  # Single required status check. It stays green when e2e is deliberately
+  # skipped, and goes red if any job it depends on failed or was cancelled.
+  gate:
+    name: CI gate
+    if: ${{ always() }}
+    needs: [changes, static, e2e]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any job did not succeed
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        run: exit 1
+
+      - name: Summarise
+        run: |
+          echo "static: ${{ needs.static.result }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "e2e: ${{ needs.e2e.result }}" >> "$GITHUB_STEP_SUMMARY"
