@@ -3,15 +3,23 @@
 Interactive invitation websites. See `AGENTS.md` for the product contract and the
 constraints that are binding on every change.
 
-This repo carries the application shell and CI gate (Phase 0.1) and the template
-definition format (Phase 0.3). There is no Supabase client, no renderer and no auth
-yet. Those are separate tasks.
+This repo carries the application shell and CI gate (Phase 0.1), the data model
+(Phase 0.2), the template definition format (Phase 0.3) and the Open Graph share
+card (Phase 0.7). There is no Supabase client, no page renderer and no auth yet.
+Those are separate tasks.
 
 The template format is the product's file format: three versioned JSON documents,
 five block types, and theme tokens kept out of content. It lives in
 `src/lib/template/`, its seed files are in `templates/`, and
 `docs/template-format.md` explains the shape and how it changes over time.
 Nothing in it renders anything.
+
+The share card is the one thing that does render. It is the 1200x630 image chat
+apps show when a link is pasted, generated per event from theme tokens plus the
+event's fields, and it is designed against the 120px thumbnail it is first seen
+at rather than against full size. It lives in `src/lib/og/`, is served from
+`/api/og`, and `docs/og-card.md` explains the constraint and the seam that gets
+replaced when the event read path lands.
 
 ## Requirements
 
