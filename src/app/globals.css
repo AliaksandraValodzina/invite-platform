@@ -1,6 +1,53 @@
 @import 'tailwindcss';
 
 /*
- * Deliberately no design tokens here yet. Theme tokens are a separate task and
- * they belong to the template format, not to the app shell.
+ * The four type roles, and the only place a font family, size, line height,
+ * weight or tracking is written down.
+ *
+ * Every value here is a custom property emitted by `themeToCssVariables`, which
+ * `ThemeScope` writes onto the element the blocks render inside. Nothing in this
+ * file has a literal value, so a block that writes `type-title` is consuming a
+ * token rather than choosing a size.
+ *
+ * The one decision these utilities make, which the token schema does not, is
+ * which of the two font stacks each role uses: display and title take
+ * `font.heading`, body and caption take `font.body`. All three design
+ * directions in data/ip-design-directions/report.md pair a characterful display
+ * face with a quiet body face and set captions in the body face, so this
+ * mapping holds for whichever one is chosen.
+ *
+ * Outside a ThemeScope these resolve to nothing, which is correct: a block is
+ * not renderable without a theme.
  */
+
+@utility type-display {
+  font-family: var(--font-heading);
+  font-size: var(--text-display-size);
+  line-height: var(--text-display-line);
+  font-weight: var(--text-display-weight);
+  letter-spacing: var(--text-display-tracking);
+}
+
+@utility type-title {
+  font-family: var(--font-heading);
+  font-size: var(--text-title-size);
+  line-height: var(--text-title-line);
+  font-weight: var(--text-title-weight);
+  letter-spacing: var(--text-title-tracking);
+}
+
+@utility type-body {
+  font-family: var(--font-body);
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line);
+  font-weight: var(--text-body-weight);
+  letter-spacing: var(--text-body-tracking);
+}
+
+@utility type-caption {
+  font-family: var(--font-body);
+  font-size: var(--text-caption-size);
+  line-height: var(--text-caption-line);
+  font-weight: var(--text-caption-weight);
+  letter-spacing: var(--text-caption-tracking);
+}

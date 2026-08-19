@@ -12,6 +12,6 @@ export default defineConfig({
     environment: 'node',
     // Playwright owns tests/e2e. Without this exclude, vitest picks up the spec
     // files and fails on the Playwright test runner import.
-    include: ['tests/unit/**/*.test.ts'],
+    include: ['tests/unit/**/*.test.ts', 'tests/unit/**/*.test.tsx'],
   },
 })
