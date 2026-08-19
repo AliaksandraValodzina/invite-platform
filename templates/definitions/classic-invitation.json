@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "blocks": [
+    {
+      "id": "hero",
+      "type": "hero",
+      "config": {
+        "eyebrow": "Together with their families",
+        "headline": "Sarah & Tom",
+        "subhead": "are getting married"
+      }
+    },
+    {
+      "id": "event-details",
+      "type": "details",
+      "config": {
+        "heading": "The day",
+        "items": [
+          { "icon": "calendar", "label": "When", "source": "event-date" },
+          { "icon": "clock", "label": "Ceremony", "source": "event-start-time" },
+          {
+            "icon": "dress-code",
+            "label": "Dress code",
+            "value": "Garden formal. Flat shoes for the lawn."
+          },
+          {
+            "icon": "parking",
+            "label": "Getting there",
+            "value": "Street parking on Marine Parade, or a ten minute walk from the ferry."
+          }
+        ]
+      }
+    },
+    {
+      "id": "countdown",
+      "type": "countdown",
+      "config": {
+        "heading": "Counting down",
+        "units": ["days", "hours", "minutes"],
+        "passedMessage": "Today is the day. See you there."
+      }
+    },
+    {
+      "id": "venue-map",
+      "type": "map",
+      "config": {
+        "heading": "Where",
+        "venueName": "The Boathouse, Shelly Beach",
+        "address": "1 Marine Parade, Manly NSW 2095",
+        "directionsUrl": "https://maps.google.com/?q=The+Boathouse+Shelly+Beach+Manly",
+        "coordinates": { "lat": -33.8006, "lng": 151.2938 },
+        "note": "The ceremony is on the lawn above the beach."
+      }
+    },
+    {
+      "id": "rsvp",
+      "type": "rsvp-form",
+      "config": {
+        "heading": "Will you be there?",
+        "intro": "One reply per invitation, please. If plans change, just send another.",
+        "submitLabel": "Send RSVP",
+        "successMessage": "Thank you. Sarah and Tom have your reply.",
+        "closedMessage": "RSVPs are closed for this event. Please contact Sarah or Tom directly.",
+        "deadlineNote": "Please reply by 1 February 2026.",
+        "fields": {
+          "email": { "enabled": true, "label": "Email, so we can send you the details" },
+          "guestCount": { "enabled": true, "label": "How many of you?", "max": 6 },
+          "dietary": { "enabled": true, "label": "Anything we should know about food?" },
+          "message": { "enabled": true, "label": "A note for Sarah and Tom" }
+        }
+      }
+    }
+  ]
+}
