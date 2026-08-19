@@ -9,19 +9,20 @@
  * file has a literal value, so a block that writes `type-title` is consuming a
  * token rather than choosing a size.
  *
- * The one decision these utilities make, which the token schema does not, is
- * which of the two font stacks each role uses: display and title take
- * `font.heading`, body and caption take `font.body`. All three design
- * directions in data/ip-design-directions/report.md pair a characterful display
- * face with a quiet body face and set captions in the body face, so this
- * mapping holds for whichever one is chosen.
+ * These utilities now make no decisions at all. Which of the two stacks a role
+ * is set in used to be decided here, for every theme at once: display and title
+ * took `font.heading`, body and caption took `font.body`. Theme version 2 moved
+ * that into the token, because the Masthead direction needs its section
+ * headings in Archivo while its names stay in Bodoni Moda, and the design
+ * directions report is explicit that Bodoni Moda is display only. See
+ * `typeStepSchema` in src/lib/template/theme.ts.
  *
  * Outside a ThemeScope these resolve to nothing, which is correct: a block is
  * not renderable without a theme.
  */
 
 @utility type-display {
-  font-family: var(--font-heading);
+  font-family: var(--text-display-family);
   font-size: var(--text-display-size);
   line-height: var(--text-display-line);
   font-weight: var(--text-display-weight);
@@ -29,7 +30,7 @@
 }
 
 @utility type-title {
-  font-family: var(--font-heading);
+  font-family: var(--text-title-family);
   font-size: var(--text-title-size);
   line-height: var(--text-title-line);
   font-weight: var(--text-title-weight);
@@ -37,7 +38,7 @@
 }
 
 @utility type-body {
-  font-family: var(--font-body);
+  font-family: var(--text-body-family);
   font-size: var(--text-body-size);
   line-height: var(--text-body-line);
   font-weight: var(--text-body-weight);
@@ -45,7 +46,7 @@
 }
 
 @utility type-caption {
-  font-family: var(--font-body);
+  font-family: var(--text-caption-family);
   font-size: var(--text-caption-size);
   line-height: var(--text-caption-line);
   font-weight: var(--text-caption-weight);

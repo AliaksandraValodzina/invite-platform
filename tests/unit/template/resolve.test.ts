@@ -235,7 +235,7 @@ describe('when a document does not load at all', () => {
 
     expect(outcome.ok).toBe(true)
     if (!outcome.ok) return
-    expect(outcome.page.cssVariables['--color-accent']).toBe('#9a7b4f')
+    expect(outcome.page.cssVariables['--color-accent']).toBe('#856539')
     expect(outcome.page.themeOverrideRejected?.stored).toEqual({
       version: 1,
       tokens: { color: { accent: '#fff' } },

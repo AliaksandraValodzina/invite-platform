@@ -1,0 +1,33 @@
+{
+  "version": 2,
+  "tokens": {
+    "color": {
+      "bg": "#f3f1ec",
+      "surface": "#fbfaf7",
+      "ink": "#1b1e24",
+      "inkMuted": "#5b6068",
+      "accent": "#7b2d3b",
+      "accentInk": "#f3f1ec",
+      "border": "#fbfaf7",
+      "critical": "#a3301f"
+    },
+    "font": {
+      "heading": "'EB Garamond', 'Iowan Old Style', 'Times New Roman', serif",
+      "body": "'Karla', 'Helvetica Neue', Arial, sans-serif"
+    },
+    "typeScale": {
+      "display": { "font": "heading", "size": 2.5, "lineHeight": 1.05, "weight": 400 },
+      "title": { "font": "heading", "size": 1.375, "lineHeight": 1.3, "weight": 400 },
+      "body": { "font": "body", "size": 1, "lineHeight": 1.6, "weight": 400 },
+      "caption": {
+        "font": "body",
+        "size": 0.8125,
+        "lineHeight": 1.4,
+        "weight": 600,
+        "tracking": 0.08
+      }
+    },
+    "space": { "xs": 0.5, "sm": 0.75, "md": 1, "lg": 2.5, "xl": 4 },
+    "radius": { "sm": 0.125, "md": 0.25, "lg": 0.375, "pill": 999 }
+  }
+}

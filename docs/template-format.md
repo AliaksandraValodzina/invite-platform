@@ -20,8 +20,8 @@ renders anything: that is the next task.
 // definition
 { "version": 1, "blocks": [{ "id": "hero", "type": "hero", "config": { ... } }] }
 
-// theme
-{ "version": 1, "tokens": { "color": {...}, "font": {...}, "typeScale": {...}, "space": {...}, "radius": {...} } }
+// theme, at version 2 since the type scale gained a font per role
+{ "version": 2, "tokens": { "color": {...}, "font": {...}, "typeScale": {...}, "space": {...}, "radius": {...} } }
 
 // content
 { "version": 1, "blocks": { "hero": { "headline": "Priya & Alex" } } }
@@ -78,11 +78,27 @@ is allowed to appear.
 reaches for a hardcoded red. The role list is closed: if a block needs a colour
 that is not in it, the fix is a new role here, never a literal in the block.
 
-Values are constrained harder than they look. Colours are hex only, font stacks
-may not contain semicolons, braces or parentheses, and every URL anywhere in the
-format must be `https`. These are all written into a page a stranger opens from a
-group chat, and a token that can hold an arbitrary CSS expression is a way to put
-arbitrary CSS on a guest page.
+One relationship between roles is enforced rather than described: `accentInk` has
+to be the same value as `bg` or `surface`. `ink` on an `accent` fill measures
+1.81, 2.10 and 1.73 to one in the three design directions, and `accentInk` is the
+only colour the block set draws on an accent fill, so pinning it is what makes
+that pairing unrepresentable rather than merely undrawn. See
+`docs/design-directions.md`.
+
+A type step also carries `font`, naming which of the two stacks the role is set
+in. That arrived in theme version 2, because one direction needs its section
+headings in its body face while its names stay in its display face, and the block
+set used to decide that for every theme at once in a stylesheet.
+
+Values are constrained harder than they look. Colours are hex only and opaque,
+font stacks may not contain semicolons, braces or parentheses, and every URL
+anywhere in the format must be `https`. These are all written into a page a
+stranger opens from a group chat, and a token that can hold an arbitrary CSS
+expression is a way to put arbitrary CSS on a guest page.
+
+Alpha is refused for a second reason on top of that one: a contrast ratio against
+a translucent colour is not computable without knowing every layer behind it, so
+a token that carries alpha is a token whose legibility cannot be asserted.
 
 `themeToCssVariables` is the only bridge from a token to a stylesheet. Blocks
 read those custom properties and nothing else, which is what makes "no hardcoded
@@ -180,6 +196,7 @@ decision made with evidence rather than the same afternoon.
 | authoring a seed file       | `tests/unit/template/seed.test.ts`         | the pull request goes red                |
 | a buyer saves               | `pipeline.load(input, { migrate: false })` | 422 with field paths, nothing is written |
 | a guest page renders        | `resolveEventPage(...)`                    | see the table below                      |
+| every committed theme       | `tests/unit/template/contrast.test.ts`     | the pull request goes red                |
 | the database, independently | check constraints from Phase 0.2           | the insert fails                         |
 
 Content cannot be fully validated on its own: it does not know which block types
@@ -207,7 +224,9 @@ or a designed error state, never a stack trace.
 
 ## Tests
 
-`tests/unit/template/`. The headline test is `versioning.test.ts`, which builds a
+`tests/unit/template/`. `contrast.test.ts` recomputes the WCAG contrast table
+for every committed theme, so a token tweak that makes a page unreadable fails a
+test rather than shipping. The headline test is `versioning.test.ts`, which builds a
 real version 2 of the format with a genuinely changed block schema and runs the
 committed version 1 seed document through it. Each case also runs the same
 document through a version 2 that bumped the number and forgot the migration, and

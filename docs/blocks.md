@@ -25,6 +25,14 @@ every break in it. A guard nobody has watched fail is not a guard.
 `max-w-prose` are structure. The rule in AGENTS.md names four things: colour,
 font, radius, spacing.
 
+**Three token pairings are also refused.** `findContrastViolations` in the same
+file fails a block that draws ink on an accent fill, paints an ink fill at all,
+or takes a boundary from `surface` or `border`. Those are the three pairings the
+design directions report found failing in every direction, and
+`tests/e2e/themes.spec.ts` is the backstop that catches a colour inherited across
+two elements, which a source reader cannot see. `docs/design-directions.md` has
+the numbers.
+
 Two exceptions, both deliberate and both narrow:
 
 - **Border width.** There is no border width token, so form controls use the
@@ -64,36 +72,43 @@ Where each one lands:
 directions use display for the names or the date lockup rather than for a
 counter.
 
-Which font each type role uses is the one decision the token schema does not
-make and the block set does: `display` and `title` take `font.heading`, `body`
-and `caption` take `font.body`. That mapping is in `src/app/globals.css` and
-holds for all three directions in `data/ip-design-directions/report.md`.
+Which font each type role uses is no longer a block set decision. It was, and
+the mapping in `src/app/globals.css` applied to every theme at once: `display`
+and `title` took `font.heading`, `body` and `caption` took `font.body`. Masthead
+cannot live with that, because Bodoni Moda is display only in that direction and
+its section headings are 24px on a phone. So theme version 2 put the choice in
+the token, as `typeScale.<role>.font`, and the utilities in `globals.css` now
+read `--text-<role>-family` and decide nothing. See `docs/design-directions.md`.
 
 ### Why `border` is unused
 
 Measured from the committed themes: `border` sits at 1.29:1 against `bg` in
-ivory and 1.43:1 in midnight, which is below the 3.0:1 a non-text boundary
-needs. A form control outlined in it would be invisible to a lot of people, so
-controls use `inkMuted`, which measures 5.20:1 at worst across both themes and
-clears 3.0:1 comfortably in all three design directions. The role stays in the
-schema for decorative rules, where sub-3:1 is the point.
+ivory and 1.43:1 in midnight, and in each of the three design directions it is
+the same value as `surface`, which is about 1.1:1. All of that is below the 3.0:1
+a non-text boundary needs. A form control outlined in it would be invisible to a
+lot of people, so controls use `inkMuted`, which clears 3.0:1 in every committed
+theme. The role stays in the schema for decorative rules, where sub-3:1 is the
+point, and `findContrastViolations` in `tests/unit/components/token-guard.ts`
+fails a block that draws a boundary from it.
 
 The design directions report reached the same conclusion from the other end:
 `surface` is about 1.1:1 against `bg` in all three directions, on purpose,
 because a stationery card is separated by paper edge and margin rather than by a
 colour step. So a card is not a boundary either.
 
-### One contrast pair the placeholder themes do not clear
+### The contrast pair the placeholder themes did not clear
 
-`ivory` measures **3.82:1** for `accent` on `bg` and **3.95:1** for `accentInk`
-on `accent`. Both are below the 4.5:1 AA needs for normal text, and the block
-set draws the RSVP button label and the directions link on exactly those pairs.
-`midnight` clears both at 9.21:1.
+`ivory` used to measure **3.82:1** for `accent` on `bg` and **3.95:1** for
+`accentInk` on `accent`, both below the 4.5:1 AA needs, and the block set draws
+the directions link and the RSVP button label on exactly those pairs. It was
+recorded here as a theme value to fix.
 
-This is a theme value to fix, never a block change, and it is not fixed here
-because the direction has not been chosen. All three directions in the report
-already clear it: 8.16:1, 8.70:1 and 8.73:1. Whichever one is picked, those two
-pairs are the ones to check.
+It is fixed: ivory's accent is now `#856539`, which is the same brass at a darker
+value, and it measures 5.19:1 and 5.36:1. What forced it was
+`tests/unit/template/contrast.test.ts`, which measures every text pair the block
+set can produce in every committed theme rather than only in the three design
+directions. A suite that had to special case a known broken theme would be a
+suite nobody trusted.
 
 ## Time
 
@@ -125,19 +140,25 @@ here so the next task does not rediscover it.
 
 - **No fluid display size.** The design directions report recommends the display
   size scale itself down so a long name does not have to wrap. That is a change
-  to the token schema, which stores one size per role. The hero instead wraps and
-  breaks inside a word if it has to, and the 320px overflow test runs against
-  "Alexandra & Christopher" rather than the sample couple. Overflow is a
-  correctness failure on a phone; a wrapped line is not.
+  to the token schema, which stores one size per role, and it is not made. What
+  is made is the other half of the same finding: the names lockup stacks, name,
+  ampersand, name, on three block level lines, because "Alexandra & Christopher"
+  set on one line overflows 320px in all three directions. `break-words` stays
+  for the case stacking cannot help with, which is one name long enough to
+  overflow by itself. Overflow is a correctness failure on a phone; a wrapped
+  line is not.
 - **No map embed.** A tile embed needs a provider, an API key and third party
   JavaScript on a page a guest opens on bad wifi, and a key is deployment config
   rather than template content. The block links out to a maps app instead.
   `map.coordinates` is stored and not rendered for the same reason: it is
   waiting on a provider decision.
-- **No web fonts.** The theme carries a font stack, not a font file, so ivory
-  currently falls back to Georgia. Self hosting through `next/font` arrives with
-  the chosen direction, since which faces to load is exactly what the direction
-  decides.
+- **No web fonts of its own.** The theme carries a font stack, not a font file.
+  The six faces the three design directions need are self hosted in
+  `src/app/fonts.ts` through `next/font/google`, and the route swaps the head of
+  each stack for the hosted face before handing tokens to `ThemeScope`. None of
+  them is preloaded, so a browser fetches a font file only when it has a glyph to
+  draw in it. `ivory` and `midnight` are not part of the template line and load
+  nothing, so they still fall back to Georgia and system-ui.
 - **No themed focus ring.** There is no focus token, so the browser's own focus
   ring is kept rather than a colour being invented for one. If a direction needs
   a designed focus state, that is a new role.
@@ -156,8 +177,11 @@ here so the next task does not rediscover it.
 
 `/preview/<theme>` renders the committed seed documents through the real
 `resolveEventPage`, so what is on screen is the same merge a guest page will
-serve. `?fixture=long-names` applies content overrides keyed by block id, and
-`?rsvp=closed` shows the grace period state.
+serve. `?fixture=long-names` applies content overrides keyed by block id,
+`?fixture=report-sample` is Emma & Jake at The Grounds of Alexandria, which is
+the content the three design directions were measured against, and
+`?rsvp=closed` shows the grace period state. `/preview` lists every theme with
+links to all three fixtures.
 
 It is not the guest page. There is no database read, no slug, and no designed
 404, expired or unpublished state. Those are Phase 0.5, and this route becomes a
