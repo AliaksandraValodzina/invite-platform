@@ -23,7 +23,7 @@ auth.users
 ## Tenancy
 
 Every table carries `owner_id uuid not null references auth.users(id)`, and RLS
-is enabled *and forced* in the same migration that creates the table. v1 is
+is enabled _and forced_ in the same migration that creates the table. v1 is
 single-tenant; retrofitting tenancy is the most painful migration this kind of
 product ever does, and the cost of carrying the column now is one column.
 
@@ -50,10 +50,10 @@ therefore needs nothing, and gets nothing, at three independent layers:
    tables and sequences in `public`. No table added later can quietly inherit
    one.
 2. **Explicit revoke.** Each table also does `revoke all on table ... from
-   public, anon`, so the guarantee is readable in the file that creates the
+public, anon`, so the guarantee is readable in the file that creates the
    table and does not depend on migration ordering.
 3. **A restrictive policy.** Each table has `... as restrictive to anon using
-   (false) with check (false)`. Redundant today, because there is no permissive
+(false) with check (false)`. Redundant today, because there is no permissive
    policy granting `anon` anything. It is there so that the day someone adds a
    permissive policy without a `to authenticated` clause, `anon` still gets
    nothing.
@@ -70,14 +70,14 @@ single-tenant product finds out about in production.
 
 ### Who can do what
 
-| Table | `anon` | `authenticated` owner | `service_role` |
-| --- | --- | --- | --- |
-| `accounts` | nothing | select, update `display_name` and `contact_email` only | all |
-| `templates` | nothing | full | all |
-| `events` | nothing | full | all |
-| `event_content` | nothing | full | all |
-| `rsvps` | nothing | select, delete | all |
-| `activation_codes` | nothing | select, insert, update as issuer | all |
+| Table              | `anon`  | `authenticated` owner                                  | `service_role` |
+| ------------------ | ------- | ------------------------------------------------------ | -------------- |
+| `accounts`         | nothing | select, update `display_name` and `contact_email` only | all            |
+| `templates`        | nothing | full                                                   | all            |
+| `events`           | nothing | full                                                   | all            |
+| `event_content`    | nothing | full                                                   | all            |
+| `rsvps`            | nothing | select, delete                                         | all            |
+| `activation_codes` | nothing | select, insert, update as issuer                       | all            |
 
 Two of those need saying out loud.
 
@@ -164,18 +164,18 @@ expire at 3am on a Sunday.
   `activation_codes.hosting_months`.
 - `grace_ends_at` defaults to `hosting_expires_at + 30 days`, filled by the
   trigger when the caller leaves it null, and constrained to be `>=
-  hosting_expires_at`.
+hosting_expires_at`.
 
 What a guest gets is `public.event_state_at(status, hosting_expires_at,
 grace_ends_at, now())`, a pure function so an API route, a test and a report all
 give the same answer:
 
-| Stage | Condition | Row | What is served |
-| --- | --- | --- | --- |
-| unpublished | `status <> 'published'` | `published_at` may be null | designed unpublished page |
-| live | `now < hosting_expires_at` | untouched | full page, RSVPs open |
-| grace | `hosting_expires_at <= now < grace_ends_at` | untouched | full page, RSVPs closed |
-| expired | `now >= grace_ends_at` | untouched until retention runs | designed expiry page, no content |
+| Stage       | Condition                                   | Row                            | What is served                   |
+| ----------- | ------------------------------------------- | ------------------------------ | -------------------------------- |
+| unpublished | `status <> 'published'`                     | `published_at` may be null     | designed unpublished page        |
+| live        | `now < hosting_expires_at`                  | untouched                      | full page, RSVPs open            |
+| grace       | `hosting_expires_at <= now < grace_ends_at` | untouched                      | full page, RSVPs closed          |
+| expired     | `now >= grace_ends_at`                      | untouched until retention runs | designed expiry page, no content |
 
 The row itself does not change at any of those boundaries. Nothing is written
 when an event expires. The first write that expiry causes is the retention
@@ -194,12 +194,12 @@ pork" are health information and, read together, religious information.
 **The rule.** A guest's identity leaves our database 30 days after the buyer's
 grace period ends. The event itself is deleted a year after that.
 
-| When | What happens | What survives |
-| --- | --- | --- |
-| `grace_ends_at + 30 days` | **Tier 1.** `guest_name`, `guest_email`, `dietary_notes`, `message` erased; `pii_redacted_at` set | `attendance`, `party_size`, `created_at`, `event_id` |
-| `grace_ends_at + 365 days` | **Tier 2.** Event row deleted | nothing; content revisions and RSVP rows cascade |
-| on request | guest erasure: `public.erase_rsvp(id)`, hard delete | nothing |
-| on request | buyer account deletion: `on delete cascade` from `auth.users` | nothing |
+| When                       | What happens                                                                                      | What survives                                        |
+| -------------------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| `grace_ends_at + 30 days`  | **Tier 1.** `guest_name`, `guest_email`, `dietary_notes`, `message` erased; `pii_redacted_at` set | `attendance`, `party_size`, `created_at`, `event_id` |
+| `grace_ends_at + 365 days` | **Tier 2.** Event row deleted                                                                     | nothing; content revisions and RSVP rows cascade     |
+| on request                 | guest erasure: `public.erase_rsvp(id)`, hard delete                                               | nothing                                              |
+| on request                 | buyer account deletion: `on delete cascade` from `auth.users`                                     | nothing                                              |
 
 **Why redact and not delete at tier 1.** Deleting outright is the cleaner privacy
 answer, but it destroys the buyer's record of their own event while they may
