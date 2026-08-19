@@ -163,18 +163,21 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
 
-      # Only chromium. Installing all three browser engines here would roughly
-      # triple the slowest step in the gate.
-      - name: Install Playwright browser and OS dependencies
-        if: ${{ steps.playwright-cache.outputs.cache-hit != 'true' }}
-        run: npx playwright install --with-deps chromium
-
-      # The binary came from the cache, but the OS libraries it links against
-      # belong to the runner image rather than the cached directory, so they
-      # still have to be ensured. This is the cheap path.
-      - name: Install Playwright OS dependencies only
-        if: ${{ steps.playwright-cache.outputs.cache-hit == 'true' }}
-        run: npx playwright install-deps chromium
+      # Only chromium, and deliberately without `--with-deps`.
+      #
+      # The first green run measured this step at 299s, which was 88% of the
+      # whole job. Almost all of that is the apt-get work that `--with-deps`
+      # does, not the browser download, which is about 110s. Runners are
+      # ephemeral, so apt cannot be cached: `install-deps` would pay that cost
+      # again on every run, cache hit or not.
+      #
+      # The ubuntu-latest image already carries the shared libraries chromium
+      # links against, so the deps install is redundant here. If that ever stops
+      # being true the smoke tests fail immediately and loudly at browser
+      # launch, which is the right way to find out, and the fix is to restore
+      # `--with-deps` on this line.
+      - name: Install Playwright browser
+        run: npx playwright install chromium
 
       - name: Run Playwright smoke tests
         run: npm run test:e2e
