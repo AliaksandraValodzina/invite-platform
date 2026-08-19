@@ -30,6 +30,8 @@ expiry and RSVP retention, is in `docs/data-model.md`.
 - **Guest pages and RSVP inserts are served through API routes with the service role.** Never direct anonymous table access.
 - **The template definition is a versioned JSON file format** — a block list, a per-block config validated by Zod, and theme tokens. **The `version` field exists from day one** so evolving a block does not break events already live. This is the product's file format and the most important decision in Phase 0. It lives in `src/lib/template/`, seeds are in `templates/`, and `docs/template-format.md` explains how it changes over time. **Content is keyed by block `id`, schemas are selected by block `type`.** Keeping those apart is what makes a rename survivable.
 - **Theme tokens are separate from content.** That separation is what later lets a buyer pick a palette and lets us restyle without touching structure.
+- **The template line is three themes, not one: Deckle & Deboss, Masthead, Foil & Midnight.** Their separateness is the product, so do not harmonise, rename or add a fourth. Every value in `templates/themes/` for those three is quoted from `data/ip-design-directions/report.md` and is not to be adjusted by eye. `docs/design-directions.md` is the map from that report to this format, including what it needed that the format did not have.
+- **Contrast is asserted, not described.** `tests/unit/template/contrast.test.ts` recomputes the WCAG table for every committed theme, and the pairings that fail in every direction are made unreachable by the theme schema, the block token guard and a browser walk in `tests/e2e/themes.spec.ts`. A colour rule that lives only in a document is a claim without a check.
 - **A block consumes tokens and nothing else. No hardcoded colour, font, radius or spacing value inside a block, ever.** One block set has to produce many visually distinct templates. If a theme variant looks broken, the fix goes into the **token schema** — never into a block component. Blocks live in `src/components/blocks/`, a unit test fails the PR on a hardcoded value, and `docs/blocks.md` lists the roles they consume.
 - **Guest pages are mobile-first and tested at 320px.** 90%+ of guests arrive from a chat link on a phone, often an old one on bad wifi.
 - **OG/meta tags are a feature, not polish.** The share-card preview in WhatsApp is how an invitation spreads, and it is the first impression of the product.
@@ -51,3 +53,10 @@ expiry and RSVP retention, is in `docs/data-model.md`.
 - No em dashes in code, comments, commit messages or PR bodies.
 - No co-author trailer on commits.
 - Commit and PR messages say what changed and why, in plain sentences.
+
+## Maintaining this file
+
+Keep this file for knowledge useful to almost every future agent session in this project.
+Do not repeat what the codebase already shows; point to the authoritative file or command instead.
+Prefer rewriting or pruning existing entries over appending new ones.
+When updating this file, preserve this bar for all agents and keep entries concise.

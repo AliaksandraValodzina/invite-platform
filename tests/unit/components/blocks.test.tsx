@@ -17,6 +17,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   BlockList,
+  HeroBlock,
   renderBlock,
   type BlockContext,
   type RsvpSubmitResult,
@@ -71,14 +72,71 @@ function render(id: string, blockContext: BlockContext = context()): string {
   return renderToStaticMarkup(renderBlock(block(id), blockContext))
 }
 
+/** The three lines of the stacked names lockup, in order. */
+function nameLines(markup: string): string[] {
+  return [...markup.matchAll(/<span data-name-line="\d+"[^>]*>([^<]*)<\/span>/g)].map(
+    (match) => match[1] as string
+  )
+}
+
+/** Everything inside the h1, tags stripped, which is what a screen reader reads. */
+function headingText(markup: string): string {
+  const heading = /<h1[^>]*>([\s\S]*?)<\/h1>/.exec(markup)
+  return (heading?.[1] ?? '').replace(/<[^>]+>/g, '').trim()
+}
+
 describe('the hero', () => {
   it('renders the buyer copy, with the headline as the page heading', () => {
     const markup = render('hero')
 
     expect(markup).toContain('<h1')
-    expect(markup).toContain('Sarah &amp; Tom')
     expect(markup).toContain('Together with their families')
     expect(markup).toContain('are getting married')
+  })
+
+  it('stacks the names, because a lockup on one line overflows 320px', () => {
+    // The first finding in data/ip-design-directions/report.md, and it was
+    // caught by rendering rather than by arithmetic: "Emma & Jake" fits on one
+    // line at 320px in all three directions and "Alexandra & Christopher" does
+    // not. Reverting this to a side by side layout reintroduces a real bug, so
+    // the three lines are asserted by their content rather than by counting
+    // them.
+    const markup = renderToStaticMarkup(
+      <HeroBlock blockId="hero" config={{ headline: 'Alexandra & Christopher' }} />
+    )
+
+    expect(nameLines(markup)).toEqual(['Alexandra', '&amp;', 'Christopher'])
+  })
+
+  it('leaves the heading reading as one name, so it is not three fragments aloud', () => {
+    const markup = render('hero')
+
+    // The lines are block level elements, so the spaces between them are thrown
+    // away by the layout and kept in the markup. A screen reader, and the
+    // accessible name of the heading, still get "Sarah & Tom".
+    expect(headingText(markup)).toBe('Sarah &amp; Tom')
+  })
+
+  it('leaves a headline with no join in it alone rather than inventing a break', () => {
+    const markup = renderToStaticMarkup(
+      <HeroBlock blockId="hero" config={{ headline: 'The Ramaswamy Wedding' }} />
+    )
+
+    expect(nameLines(markup)).toEqual(['The Ramaswamy Wedding'])
+  })
+
+  it.each([
+    ['an ampersand', 'Emma & Jake', ['Emma', '&amp;', 'Jake']],
+    ['the word and', 'Emma and Jake', ['Emma', 'and', 'Jake']],
+    ['a plus', 'Emma + Jake', ['Emma', '+', 'Jake']],
+    // "Alexander" contains "and", so a naive substring split would cut a name
+    // in half. The joins are matched with the spaces around them for that
+    // reason, and this is the case that proves it.
+    ['a name containing the join word', 'Alexander & Jake', ['Alexander', '&amp;', 'Jake']],
+  ])('splits on %s', (_name, headline, expected) => {
+    const markup = renderToStaticMarkup(<HeroBlock blockId="hero" config={{ headline }} />)
+
+    expect(nameLines(markup)).toEqual(expected)
   })
 })
 

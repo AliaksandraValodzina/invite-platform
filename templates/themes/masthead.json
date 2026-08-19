@@ -1,0 +1,39 @@
+{
+  "version": 2,
+  "tokens": {
+    "color": {
+      "bg": "#fcfbfa",
+      "surface": "#efece6",
+      "ink": "#111111",
+      "inkMuted": "#5a5a5a",
+      "accent": "#1f3bb3",
+      "accentInk": "#fcfbfa",
+      "border": "#efece6",
+      "critical": "#b3160b"
+    },
+    "font": {
+      "heading": "'Bodoni Moda', Didot, 'Bodoni MT', Georgia, serif",
+      "body": "'Archivo', 'Helvetica Neue', Arial, sans-serif"
+    },
+    "typeScale": {
+      "display": {
+        "font": "heading",
+        "size": 2.625,
+        "lineHeight": 1,
+        "weight": 400,
+        "tracking": -0.01
+      },
+      "title": { "font": "body", "size": 1.5, "lineHeight": 1.2, "weight": 600 },
+      "body": { "font": "body", "size": 1, "lineHeight": 1.55, "weight": 400 },
+      "caption": {
+        "font": "body",
+        "size": 0.75,
+        "lineHeight": 1.4,
+        "weight": 600,
+        "tracking": 0.14
+      }
+    },
+    "space": { "xs": 0.5, "sm": 1, "md": 1.5, "lg": 4, "xl": 6 },
+    "radius": { "sm": 0, "md": 0, "lg": 0, "pill": 999 }
+  }
+}

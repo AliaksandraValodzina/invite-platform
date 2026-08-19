@@ -21,7 +21,7 @@ import { describe, expect, it } from 'vitest'
 import { themePipeline, themeToCssVariables } from '@/lib/template'
 
 import { IVORY_THEME, readSeedFile } from '../template/seed-files'
-import { findStyleViolations } from './token-guard'
+import { findContrastViolations, findStyleViolations } from './token-guard'
 
 /**
  * The vocabulary a block is allowed to write, taken from the schema rather than
@@ -137,5 +137,107 @@ describe('the five v1 blocks', () => {
     for (const paint of paints) {
       expect(['fill="none"', 'stroke="currentColor"']).toContain(paint)
     }
+  })
+})
+
+/**
+ * The three pairings the design directions report found failing in all three
+ * directions, made unreachable from a block.
+ *
+ * Half the work is done in the theme schema, which refuses an `accentInk` that
+ * is not `bg` or `surface`. This is the other half: it stops a block choosing
+ * one of the pairings in the first place. Same two halves as the token rule
+ * above, and for the same reason. The detector is shown sources written to break
+ * each rule, and then the real block files have to come back clean.
+ */
+describe('the contrast guard itself', () => {
+  it('reports a label drawn in ink on an accent fill', () => {
+    const violating = `
+      export function Bad() {
+        return (
+          <button className="bg-[var(--color-accent)] text-[color:var(--color-ink)]">Send</button>
+        )
+      }
+    `
+
+    const violations = findContrastViolations(violating)
+
+    expect(violations).toHaveLength(1)
+    expect(violations[0]?.reason).toContain('--color-accent-ink')
+  })
+
+  it('reports an accent fill that does not say what colour the text on it is', () => {
+    // Not a false alarm: inherited text on an accent fill is whatever the page
+    // set, which is ink, which is the 1.81:1 pairing. A fill has to name its own
+    // ink.
+    const violations = findContrastViolations(`<div className="bg-[var(--color-accent)] p-2" />`)
+
+    expect(violations).toHaveLength(1)
+    expect(violations[0]?.found).toBe('bg-[var(--color-accent)]')
+  })
+
+  it.each([
+    ['an ink fill', `<div className="bg-[var(--color-ink)]" />`, 'no ink fill'],
+    ['a muted ink fill', `<div className="bg-[var(--color-ink-muted)]" />`, 'no ink fill'],
+    [
+      'a boundary drawn in surface',
+      `<input className="border-[color:var(--color-surface)]" />`,
+      'boundaries read --color-ink-muted',
+    ],
+    [
+      'a boundary drawn in border',
+      `<input className="border-[color:var(--color-border)]" />`,
+      'boundaries read --color-ink-muted',
+    ],
+    [
+      'a ring drawn in surface',
+      `<div className="ring-[color:var(--color-surface)]" />`,
+      'boundaries read --color-ink-muted',
+    ],
+  ])('reports %s', (_name, source, reason) => {
+    const violations = findContrastViolations(source)
+
+    expect(violations).toHaveLength(1)
+    expect(violations[0]?.reason).toContain(reason)
+  })
+
+  it('passes the pairing the block set actually uses', () => {
+    const clean = `
+      const BUTTON = 'bg-[var(--color-accent)] text-[color:var(--color-accent-ink)] rounded-[var(--radius-pill)]'
+      const CONTROL = 'border border-[color:var(--color-ink-muted)] bg-[var(--color-surface)] text-[color:var(--color-ink)]'
+      export function Good() {
+        return <button className={BUTTON}><span className={CONTROL} /></button>
+      }
+    `
+
+    expect(findContrastViolations(clean)).toEqual([])
+  })
+
+  it('reads code and not comments, so a comment may name the pairing it forbids', () => {
+    const documented = `
+      // Never write bg-[var(--color-ink)] here, and never text-[color:var(--color-ink)]
+      /* on bg-[var(--color-accent)]: it is 1.81:1 in the best of the three directions. */
+      export const nothing = null
+    `
+
+    expect(findContrastViolations(documented)).toEqual([])
+  })
+})
+
+describe('the five v1 blocks, against the failing pairings', () => {
+  it.each(blockSources())('$name writes none of the three pairings', (file) => {
+    expect(findContrastViolations(file.source)).toEqual([])
+  })
+
+  it('draws the one accent fill there is, so the rule is not vacuously satisfied', () => {
+    // Without this, deleting the RSVP button would make every assertion above
+    // pass by having nothing left to check.
+    const sources = blockSources()
+      .map((file) => file.source)
+      .join('\n')
+
+    expect(sources).toContain('bg-[var(--color-accent)]')
+    expect(sources).toContain('text-[color:var(--color-accent-ink)]')
+    expect(sources).toContain('border-[color:var(--color-ink-muted)]')
   })
 })

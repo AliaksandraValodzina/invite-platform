@@ -183,24 +183,30 @@ function withoutVariants(className: string): string {
  * sentence is not a set of classes.
  */
 function classNames(code: string): string[] {
+  return classListLiterals(code).flatMap((literal) => splitClasses(literal))
+}
+
+/** The string and template literals in the source that read like a class list. */
+function classListLiterals(code: string): string[] {
   const literals = code.match(/(['"`])(?:\\.|(?!\1)[\s\S])*\1/g) ?? []
+  return literals.filter((literal) => splitClasses(literal).length > 0)
+}
 
-  return literals.flatMap((literal) => {
-    const words = literal
-      .slice(1, -1)
-      .split(/[\s${}]+/)
-      .filter(Boolean)
+function splitClasses(literal: string): string[] {
+  const words = literal
+    .slice(1, -1)
+    .split(/[\s${}]+/)
+    .filter(Boolean)
 
-    const looksLikeClasses =
-      words.length > 0 &&
-      // `#` is in the charset so that `text-[#ff0000]`, which is exactly the
-      // thing this guard exists to catch, still reads as a class rather than as
-      // prose and gets skipped.
-      words.every((word) => /^[a-z0-9][a-z0-9:_.,%/#[\]()-]*$/.test(word)) &&
-      words.some((word) => word.includes('-') || word.includes('['))
+  const looksLikeClasses =
+    words.length > 0 &&
+    // `#` is in the charset so that `text-[#ff0000]`, which is exactly the
+    // thing this guard exists to catch, still reads as a class rather than as
+    // prose and gets skipped.
+    words.every((word) => /^[a-z0-9][a-z0-9:_.,%/#[\]()-]*$/.test(word)) &&
+    words.some((word) => word.includes('-') || word.includes('['))
 
-    return looksLikeClasses ? words : []
-  })
+  return looksLikeClasses ? words : []
 }
 
 /**
@@ -210,4 +216,99 @@ function classNames(code: string): string[] {
  */
 function stripComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+}
+
+/**
+ * The three pairings the design directions report found failing in all three
+ * directions, turned into rules a block cannot break.
+ *
+ * They are block set rules rather than theme rules, which is the report's own
+ * conclusion: "they are the same three in every direction, which makes them
+ * block-set rules rather than theme-specific ones." Two halves hold the line
+ * between them. The theme schema makes `accentInk` be `bg` or `surface`, so a
+ * label on an accent fill is never ink whatever palette is loaded. This is the
+ * other half: it stops a block choosing the pairing in the first place.
+ *
+ * `tests/e2e/contrast.spec.ts` is the backstop, because a static reader cannot
+ * see a colour inherited across two elements. It walks the rendered page in a
+ * browser and measures what a guest would actually read.
+ */
+const FORBIDDEN_PAIRINGS: readonly {
+  readonly pattern: RegExp
+  readonly reason: string
+}[] = [
+  {
+    /*
+     * `accent` on an `ink` fill measures 1.81, 2.10 and 1.73 to one. The report's
+     * rule is "`accent` is never drawn on an `ink` fill, including rules and
+     * icons", and the cheapest way to guarantee it is to have no ink fill at
+     * all: the block set paints `bg` and `surface` and nothing else.
+     */
+    pattern: /\bbg-\[var\(--color-ink(?:-muted)?\)\]/,
+    reason:
+      'there is no ink fill in the block set, because accent on an ink fill is 1.81:1 at best',
+  },
+  {
+    /*
+     * `surface` sits about 1.1:1 against `bg` in all three directions, on
+     * purpose, because a stationery card is separated by paper edge and margin
+     * rather than by a colour step. So it cannot be a boundary, and neither can
+     * `border`, which measures 1.29:1 and 1.43:1 in the committed placeholder
+     * themes. A boundary reads `inkMuted`, which clears 3.0:1 in every theme
+     * the repo ships.
+     */
+    pattern: /\b(?:border|ring|outline|divide)-\[color:var\(--color-(?:surface|border)\)\]/,
+    reason:
+      'a boundary drawn in surface or border is about 1.1:1 against the page; boundaries read --color-ink-muted',
+  },
+]
+
+/** `bg-[var(--color-accent)]` in a class list, wherever it sits in it. */
+const ACCENT_FILL = /\bbg-\[var\(--color-accent\)\]/
+/** Any text colour set in the same class list as that fill. */
+const TEXT_COLOUR = /\btext-\[color:var\((--color-[a-z-]+)\)\]/g
+
+/**
+ * Reports every place a block writes one of the pairings that fails in all
+ * three design directions.
+ *
+ * Separate from `findStyleViolations` because it answers a different question.
+ * That one asks whether a value was written down instead of consumed as a
+ * token; this one asks whether two tokens were put together in a combination
+ * that is unreadable in every theme the repo ships.
+ */
+export function findContrastViolations(source: string): StyleViolation[] {
+  const code = stripComments(source)
+  const violations: StyleViolation[] = []
+
+  for (const rule of FORBIDDEN_PAIRINGS) {
+    const match = rule.pattern.exec(code)
+    if (match !== null) violations.push({ found: match[0], reason: rule.reason })
+  }
+
+  for (const literal of classListLiterals(code)) {
+    if (!ACCENT_FILL.test(literal)) continue
+
+    const drawn = [...literal.matchAll(TEXT_COLOUR)].map((match) => match[1] as string)
+
+    if (drawn.length === 0) {
+      violations.push({
+        found: 'bg-[var(--color-accent)]',
+        reason:
+          'an accent fill has to name the colour of the text on it, and that colour is --color-accent-ink',
+      })
+      continue
+    }
+
+    for (const token of drawn) {
+      if (token === '--color-accent-ink') continue
+      violations.push({
+        found: `bg-[var(--color-accent)] with text-[color:var(${token})]`,
+        reason:
+          'text on an accent fill is --color-accent-ink; ink on accent is 1.81:1 in the best of the three directions',
+      })
+    }
+  }
+
+  return violations
 }

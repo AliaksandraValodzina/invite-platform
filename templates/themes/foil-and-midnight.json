@@ -1,0 +1,45 @@
+{
+  "version": 2,
+  "tokens": {
+    "color": {
+      "bg": "#131a2b",
+      "surface": "#1d2740",
+      "ink": "#f3efe4",
+      "inkMuted": "#a8b0c6",
+      "accent": "#d8b368",
+      "accentInk": "#131a2b",
+      "border": "#1d2740",
+      "critical": "#f2a79a"
+    },
+    "font": {
+      "heading": "'Cinzel', 'Trajan Pro', Optima, Georgia, serif",
+      "body": "'Jost', Futura, 'Century Gothic', 'Avenir Next', sans-serif"
+    },
+    "typeScale": {
+      "display": {
+        "font": "heading",
+        "size": 2.125,
+        "lineHeight": 1.1,
+        "weight": 400,
+        "tracking": 0.04
+      },
+      "title": {
+        "font": "heading",
+        "size": 1.1875,
+        "lineHeight": 1.3,
+        "weight": 400,
+        "tracking": 0.1
+      },
+      "body": { "font": "body", "size": 1, "lineHeight": 1.65, "weight": 400 },
+      "caption": {
+        "font": "body",
+        "size": 0.8125,
+        "lineHeight": 1.5,
+        "weight": 400,
+        "tracking": 0.06
+      }
+    },
+    "space": { "xs": 0.5, "sm": 0.75, "md": 1.25, "lg": 3.25, "xl": 5.25 },
+    "radius": { "sm": 0.125, "md": 0.25, "lg": 0.5, "pill": 999 }
+  }
+}

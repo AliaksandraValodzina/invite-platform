@@ -12,8 +12,8 @@
  * than a hand assembled approximation of it.
  *
  * Query parameters, both of them preview affordances:
- *   fixture=sample|long-names   which content overrides to apply
- *   rsvp=open|closed            which serving phase the RSVP block is in
+ *   fixture=sample|long-names|report-sample   which content overrides to apply
+ *   rsvp=open|closed                          the serving phase of the RSVP block
  *
  * There is deliberately no parameter for freezing the clock. It would only hold
  * until hydration, after which the countdown reads the browser's clock, so it
@@ -36,6 +36,7 @@ import {
 } from '@/lib/preview/fixture'
 import { EMPTY_THEME_OVERRIDE, resolveEventPage } from '@/lib/template'
 
+import { withWebFonts } from '../../fonts'
 import { previewRsvpSubmit } from './actions'
 
 // The countdown is rendered with the server's clock, so this page must not be
@@ -89,7 +90,14 @@ export default async function BlockPreviewPage({
   }
 
   return (
-    <ThemeScope tokens={outcome.page.tokens}>
+    /*
+     * `withWebFonts` swaps the head of each font stack for the self hosted face
+     * of the same name. It is applied here rather than inside ThemeScope so that
+     * the component turning tokens into CSS stays free of anything Next
+     * specific, and the guest page in Phase 0.5 does the same thing in the same
+     * place. See src/app/fonts.ts for why the faces are not preloaded.
+     */
+    <ThemeScope tokens={withWebFonts(outcome.page.tokens)}>
       <BlockList
         blocks={outcome.page.blocks}
         context={{

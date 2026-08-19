@@ -21,16 +21,25 @@ export const slugSchema = z
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'must be lower case words joined by single hyphens')
 
 /**
- * Hex only. Named colours and `var(...)` expressions are rejected on purpose:
- * a token is written into a CSS custom property, and a token that can hold an
- * arbitrary CSS expression is a way to put arbitrary CSS on a guest page. Hex
- * also stays machine readable, which is what a later contrast check needs.
+ * Hex only, and opaque. Named colours and `var(...)` expressions are rejected on
+ * purpose: a token is written into a CSS custom property, and a token that can
+ * hold an arbitrary CSS expression is a way to put arbitrary CSS on a guest
+ * page. Hex also stays machine readable, which is what the contrast check in
+ * `contrast.ts` needs.
+ *
+ * The eight digit form is rejected for the same reason, one step further on.
+ * A contrast ratio against a translucent colour is not computable without
+ * knowing every layer behind it, so a token that carries alpha is a token whose
+ * legibility cannot be asserted. The design directions report reached this from
+ * the other end: an `inkMuted` border dimmed to 40% alpha drops under the 3.0:1
+ * a non text boundary needs, "so the token set should not offer alpha variants
+ * of border colours". The token set therefore offers none at all.
  */
 export const hexColourSchema = z
   .string()
   .regex(
-    /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i,
-    'must be a hex colour such as #1b1b1f, #fff or #1b1b1fcc'
+    /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i,
+    'must be an opaque hex colour such as #1b1b1f or #fff; alpha is not allowed because contrast has to stay computable'
   )
 
 /**

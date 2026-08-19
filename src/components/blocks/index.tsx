@@ -26,7 +26,7 @@ import { RsvpFormBlock, type RsvpPhase, type RsvpSubmit } from './rsvp-form-bloc
 export { BlockSection } from './block-section'
 export { CountdownBlock } from './countdown-block'
 export { DetailsBlock, resolveDetailValue } from './details-block'
-export { HeroBlock } from './hero-block'
+export { HeroBlock, stackNames } from './hero-block'
 export { MapBlock } from './map-block'
 export {
   RsvpFormBlock,
