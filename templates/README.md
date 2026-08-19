@@ -42,7 +42,15 @@ insert.
 - No date, time or time zone appears in a definition. The event row owns those.
   A details item that needs the date uses `"source": "event-date"` rather than
   writing it out, so the countdown and the details list can never disagree.
-- Every URL is `https`.
+- Every URL is `https`. The one exception is a picture the app serves itself,
+  which is a leading slash path such as
+  `/samples/unlicensed-placeholder/floral-band-UNLICENSED-PLACEHOLDER.jpg`.
+- Artwork named by a definition is **decoration**, so it must carry no words. A
+  whole invitation card puts the couple's names, date and venue on the page
+  twice, once as pixels and once as real text, and the format cannot catch that
+  because it cannot read a JPEG. Everything under
+  `public/samples/unlicensed-placeholder/` is an unlicensed placeholder that must
+  not ship; its README says where it came from and what is unknown about it.
 - Colours are opaque hex. A translucent token cannot have its contrast measured,
   and every theme's contrast is measured.
 - `accentInk` is the same value as `bg` or `surface`. A label on an accent fill

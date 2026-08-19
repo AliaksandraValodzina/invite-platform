@@ -17,8 +17,8 @@ renders anything: that is the next task.
 | content    | `event_content.content`                  | the buyer's overrides, keyed by block id  |
 
 ```jsonc
-// definition
-{ "version": 1, "blocks": [{ "id": "hero", "type": "hero", "config": { ... } }] }
+// definition, at version 2 since the hero gained its artwork slot
+{ "version": 2, "blocks": [{ "id": "hero", "type": "hero", "config": { ... } }] }
 
 // theme, at version 2 since the type scale gained a font per role
 { "version": 2, "tokens": { "color": {...}, "font": {...}, "typeScale": {...}, "space": {...}, "radius": {...} } }
@@ -96,6 +96,12 @@ anywhere in the format must be `https`. These are all written into a page a
 stranger opens from a group chat, and a token that can hold an arbitrary CSS
 expression is a way to put arbitrary CSS on a guest page.
 
+The one thing that is not a URL is a picture the app serves itself. That is a
+leading slash path with a closed extension list, and it rejects a leading `//`,
+which a browser reads as another host, a `..` segment, and `svg`, because an SVG
+is a scriptable document and one from our own origin is same origin with the
+guest page.
+
 Alpha is refused for a second reason on top of that one: a contrast ratio against
 a translucent colour is not computable without knowing every layer behind it, so
 a token that carries alpha is a token whose legibility cannot be asserted.
@@ -121,6 +127,33 @@ zone correctness rule would stop being enforceable in one place. Where a details
 item needs the date it writes `"source": "event-date"` instead, from a closed
 enum. There is deliberately no expression language: `{{event.date}}` in a buyer
 editable document is how a template becomes a sandbox.
+
+### Pictures: `hero.image` and `hero.artwork`
+
+Two picture fields on one block, because they are two kinds of thing and the
+difference decides how each is drawn.
+
+| Field     | Is         | Alt text         | Drawn as                                |
+| --------- | ---------- | ---------------- | --------------------------------------- |
+| `image`   | content    | required         | a photo inside the reading column       |
+| `artwork` | decoration | none, and no key | a full width band above everything else |
+
+`artwork` is what makes the top of a page read as an invitation. It has no alt
+key at all, and that absence is the design: the block draws it with `alt=""`, so
+nobody is ever asked to transcribe words that are baked into a picture.
+
+Which is the failure mode to watch. A whole invitation card used as artwork puts
+the couple's names, date and venue on the page twice, once as pixels in somebody
+else's typeface and once as the real themed text below, and it puts the wrong
+wedding into a screen reader if it is described. The format cannot enforce that,
+because it cannot read a JPEG. The guided form will have to, and until it exists
+the artwork committed with a template is cropped to its artwork by hand. See
+`public/samples/unlicensed-placeholder/README.md`.
+
+There is no crop, focal point or frame key. The band is the shape of the file.
+The stepped arch aperture the design directions report specifies is a `frame`
+value that has not been built; by the rules below it arrives as a new optional
+field, which is a version bump with no rewrite.
 
 `rsvp-form.fields` is a record of the four known questions, not a list of
 questions. A list is a question builder with extra steps, and a custom RSVP
@@ -226,9 +259,11 @@ or a designed error state, never a stack trace.
 
 `tests/unit/template/`. `contrast.test.ts` recomputes the WCAG contrast table
 for every committed theme, so a token tweak that makes a page unreadable fails a
-test rather than shipping. The headline test is `versioning.test.ts`, which builds a
-real version 2 of the format with a genuinely changed block schema and runs the
-committed version 1 seed document through it. Each case also runs the same
-document through a version 2 that bumped the number and forgot the migration, and
-asserts that it fails, so the migrations are proven load bearing rather than
-described as such.
+test rather than shipping. The headline test is `versioning.test.ts`, which builds
+a real next version of the format with a genuinely changed block schema, on top of
+the ladder that actually shipped, and runs the committed seed document through it.
+It also runs a document frozen at version 1, from before the hero gained its
+artwork slot, so the bottom rung keeps being climbed as the ladder grows. Each
+case runs the same document through a next version that bumped the number and
+forgot the migration, and asserts that it fails, so the migrations are proven
+load bearing rather than described as such.

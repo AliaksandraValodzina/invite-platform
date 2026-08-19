@@ -1,5 +1,26 @@
 /**
- * The hero: the eyebrow, the names, the line under them, and optionally a photo.
+ * The hero: decorative artwork, the eyebrow, the names, the line under them,
+ * and optionally a photo.
+ *
+ * The artwork band is what makes the top of the page read as an invitation.
+ * Everything about how it is drawn follows from it being decoration rather than
+ * content:
+ *
+ *   - it carries `alt=""` and is hidden from assistive technology, so a screen
+ *     reader reads the couple's real names once, in the theme's type, and never
+ *     a transcription of somebody else's card;
+ *   - nothing is ever drawn on top of it, so no text on this page has its
+ *     contrast measured against a picture instead of against a token, and
+ *     tests/unit/template/contrast.test.ts stays able to see every pairing the
+ *     block set can produce;
+ *   - it is fetched lazily and at low priority, because the names are what a
+ *     guest is here to read and they must not queue behind a JPEG on the hotel
+ *     wifi.
+ *
+ * The band and the lockup are one element with one wrapper each, and nothing
+ * outside this block positions either of them. That is deliberate: the envelope
+ * reveal the captain wants later has to be able to wrap this composition, clip
+ * it and animate it as a unit.
  *
  * The headline is the page's `h1`. It is also the one piece of copy on the page
  * that is guaranteed to be as long as the buyer's names, and the measurements in
@@ -69,7 +90,11 @@ export function HeroBlock({
   const lines = stackNames(config.headline)
 
   return (
-    <BlockSection blockId={blockId} className="text-center">
+    <BlockSection
+      blockId={blockId}
+      className="text-center"
+      bleed={config.artwork === undefined ? undefined : <HeroArtwork src={config.artwork.src} />}
+    >
       {config.image !== undefined && (
         /*
          * A plain img rather than next/image. next/image needs either a host
@@ -119,5 +144,43 @@ export function HeroBlock({
         </p>
       )}
     </BlockSection>
+  )
+}
+
+/**
+ * The artwork band.
+ *
+ * It has no aspect ratio of its own, and no crop. The band IS the shape of the
+ * file, which is why the placeholder committed with this change is a crop of
+ * the card the captain supplied rather than the whole card: a shape decision
+ * taken here would be a shape every future piece of artwork had to agree with,
+ * and there is nowhere in the format to record what part of a picture matters.
+ * The cost is that a whole invitation card named here renders as a whole
+ * invitation card, text and all. See docs/blocks.md.
+ *
+ * The wrapper carries no styles. It exists so the reveal animation has an
+ * element to clip and transform without reaching into this block.
+ */
+function HeroArtwork({ src }: { readonly src: string }) {
+  return (
+    <div data-hero-artwork="">
+      {/*
+       * A plain img, for the same reason the photo above is one: next/image
+       * wants a host allowlist or stored dimensions and the format has neither.
+       *
+       * `alt=""` plus `aria-hidden` is the whole accessibility contract of this
+       * element. It says nothing the page does not already say in real text.
+       */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={src}
+        alt=""
+        aria-hidden="true"
+        loading="lazy"
+        fetchPriority="low"
+        decoding="async"
+        className="block w-full"
+      />
+    </div>
   )
 }

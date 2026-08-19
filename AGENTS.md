@@ -32,6 +32,13 @@ expiry and RSVP retention, is in `docs/data-model.md`.
 - **Theme tokens are separate from content.** That separation is what later lets a buyer pick a palette and lets us restyle without touching structure.
 - **The template line is three themes, not one: Deckle & Deboss, Masthead, Foil & Midnight.** Their separateness is the product, so do not harmonise, rename or add a fourth. Every value in `templates/themes/` for those three is quoted from `data/ip-design-directions/report.md` and is not to be adjusted by eye. `docs/design-directions.md` is the map from that report to this format, including what it needed that the format did not have.
 - **Contrast is asserted, not described.** `tests/unit/template/contrast.test.ts` recomputes the WCAG table for every committed theme, and the pairings that fail in every direction are made unreachable by the theme schema, the block token guard and a browser walk in `tests/e2e/themes.spec.ts`. A colour rule that lives only in a document is a claim without a check.
+- **The hero artwork slot is decoration, and the format keeps it that way.** A
+  template names `hero.artwork`; the block draws it as a band above the names
+  with `alt=""` and nothing on top of it, so no text has its contrast measured
+  against a picture. There is deliberately no alt field: artwork must carry no
+  words, or the couple's details appear twice, once as pixels and once as real
+  text. Everything in `public/samples/unlicensed-placeholder/` is an unlicensed
+  placeholder that must not ship. See `docs/blocks.md`.
 - **A block consumes tokens and nothing else. No hardcoded colour, font, radius or spacing value inside a block, ever.** One block set has to produce many visually distinct templates. If a theme variant looks broken, the fix goes into the **token schema** — never into a block component. Blocks live in `src/components/blocks/`, a unit test fails the PR on a hardcoded value, and `docs/blocks.md` lists the roles they consume.
 - **Guest pages are mobile-first and tested at 320px.** 90%+ of guests arrive from a chat link on a phone, often an old one on bad wifi.
 - **OG/meta tags are a feature, not polish.** The share-card preview in WhatsApp is how an invitation spreads, and it is the first impression of the product.

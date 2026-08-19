@@ -24,6 +24,7 @@ export const metadata: Metadata = {
 
 const FIXTURES: readonly { readonly key: string; readonly label: string }[] = [
   { key: 'report-sample', label: 'Emma & Jake' },
+  { key: 'no-artwork', label: 'Without the artwork' },
   { key: 'long-names', label: 'Long names at 320px' },
   { key: 'sample', label: 'Template defaults' },
 ]
@@ -36,6 +37,20 @@ export default function PreviewIndexPage() {
         The five v1 blocks, rendered from the committed seed documents under one theme. There is no
         database read, no event slug and no designed 404 or expired state here: this is the block
         set with a theme on it, and nothing else exists yet.
+      </p>
+
+      <p
+        data-testid="artwork-placeholder-notice"
+        className="mt-4 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
+      >
+        <span className="font-semibold">The artwork at the top of each page is a placeholder.</span>{' '}
+        It is the sample image supplied on 20 August 2026, cropped to its florals so that the
+        card&rsquo;s own printed text stays out of frame and the couple&rsquo;s names, date and
+        venue below it are the only place those words appear. Its rights are unestablished and it
+        must not ship. It is rendered exactly as supplied in all three directions, with no
+        recolouring, tint or filter, because how it sits against each palette is the thing to judge.
+        Compare each direction against <span className="font-medium">Without the artwork</span> to
+        see what it is doing.
       </p>
 
       <h2 className="mt-8 text-lg font-semibold">The template line</h2>

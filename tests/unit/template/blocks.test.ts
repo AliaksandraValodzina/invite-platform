@@ -63,6 +63,59 @@ describe('hero', () => {
     expect(result.success).toBe(false)
     expect(messagesFrom(result)).toContain(expectedMessage)
   })
+
+  describe('artwork', () => {
+    it('takes a path to a file the app serves, which is where the template line keeps its own', () => {
+      const config = { ...valid, artwork: { src: '/samples/floral-band.jpg' } }
+      expect(heroConfigSchema.parse(config)).toEqual(config)
+    })
+
+    it('takes an https URL too, for artwork a buyer uploads to a host', () => {
+      const config = { ...valid, artwork: { src: 'https://cdn.example.com/band.webp' } }
+      expect(heroConfigSchema.parse(config)).toEqual(config)
+    })
+
+    it('has nowhere to put alt text, because it is decoration and the block draws alt=""', () => {
+      // The rule this holds: nothing decorative is ever described to a screen
+      // reader, so nobody is ever asked to transcribe words baked into a
+      // picture. An alt key here would be an invitation to do exactly that.
+      const result = heroConfigSchema.safeParse({
+        ...valid,
+        artwork: { src: '/samples/floral-band.jpg', alt: 'Watercolour florals' },
+      })
+
+      expect(result.success).toBe(false)
+    })
+
+    it.each([
+      ['javascript:alert(1)', 'must use https, got "javascript:"'],
+      ['http://cdn.example.com/band.jpg', 'must use https, got "http:"'],
+      ['data:image/png;base64,iVBORw0KGgo=', 'must use https, got "data:"'],
+      // A browser reads this as another host entirely, which is the whole point
+      // of keeping app served artwork to paths.
+      [
+        '//evil.example.com/band.jpg',
+        'must not start with "//", which a browser reads as another host',
+      ],
+      ['/samples/../../etc/passwd.png', 'must not contain a ".." segment'],
+    ])('rejects the artwork src %s', (src, expectedMessage) => {
+      const result = heroConfigSchema.safeParse({ ...valid, artwork: { src } })
+
+      expect(result.success).toBe(false)
+      expect(messagesFrom(result)).toContain(expectedMessage)
+    })
+
+    it.each([
+      // An SVG served from our own origin is same origin with the guest page,
+      // and an SVG is a document that can carry script.
+      ['/samples/band.svg'],
+      ['/samples/band'],
+      ['/samples/band.js'],
+      ['relative/band.jpg'],
+    ])('rejects the artwork src %s as not a picture this app serves', (src) => {
+      expect(heroConfigSchema.safeParse({ ...valid, artwork: { src } }).success).toBe(false)
+    })
+  })
 })
 
 describe('details', () => {

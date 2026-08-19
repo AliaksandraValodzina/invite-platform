@@ -23,14 +23,33 @@ import { createDocumentPipeline, type DocumentMigration } from './document'
 import { slugSchema } from './primitives'
 
 /** Bumped when the shape of a block config, or the block list itself, changes. */
-export const CURRENT_DEFINITION_VERSION = 1
+export const CURRENT_DEFINITION_VERSION = 2
 
 /**
- * Empty because nothing has changed yet. The runner asserts this list has
- * exactly `CURRENT_DEFINITION_VERSION - 1` entries, so bumping the version
- * without writing the migration fails at import time.
+ * The ladder. The runner asserts this list has exactly
+ * `CURRENT_DEFINITION_VERSION - 1` entries, so bumping the version without
+ * writing the migration fails at import time.
  */
-export const DEFINITION_MIGRATIONS: readonly DocumentMigration[] = []
+export const DEFINITION_MIGRATIONS: readonly DocumentMigration[] = [
+  {
+    from: 1,
+    to: 2,
+    description: 'hero gains an optional artwork slot',
+    /*
+     * Nothing to rewrite. `hero.artwork` is optional, so a version 1 document
+     * satisfies the version 2 schema exactly as it was stored, and a version 1
+     * hero renders the way it did the day before: with no artwork.
+     *
+     * The number still moves. `CURRENT_DEFINITION_VERSION` is what a write path
+     * checks with `{ migrate: false }`, and it is what makes
+     * `templates.definition_version` answer "which documents predate the
+     * artwork slot" with a query rather than with a guess. A block config shape
+     * that changed without the number moving is a change nothing downstream can
+     * see. See docs/template-format.md.
+     */
+    migrate: (document) => ({ ...document, version: 2 }),
+  },
+]
 
 export type BlockConfigSchemas = Record<string, z.ZodType>
 

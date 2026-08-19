@@ -77,6 +77,54 @@ test.describe('the guest page blocks', () => {
     expect(widest).toBeLessThanOrEqual(clientWidth)
   })
 
+  test('draws the hero artwork above the names, at full width and out of the a11y tree', async ({
+    page,
+  }) => {
+    await page.setViewportSize(MOBILE)
+    await page.goto('/preview/deckle-and-deboss?fixture=report-sample')
+
+    const band = page.locator('[data-hero-artwork] img')
+    await expect(band).toHaveAttribute('alt', '')
+    await expect(band).toHaveAttribute('aria-hidden', 'true')
+
+    // Full width of the page canvas and above the h1. A source reader cannot
+    // see either: both are the result of layout.
+    const box = await band.boundingBox()
+    const heading = await page.getByRole('heading', { level: 1 }).boundingBox()
+    expect(box).not.toBeNull()
+    expect(heading).not.toBeNull()
+    expect(box!.x).toBe(0)
+    expect(Math.round(box!.width)).toBe(MOBILE.width)
+    expect(box!.y).toBeLessThan(heading!.y)
+    expect(box!.y + box!.height).toBeLessThanOrEqual(heading!.y)
+
+    // Nothing is drawn on it, so nothing on this page has its contrast measured
+    // against a picture instead of against a token. Asserted by geometry rather
+    // than by markup, because a source reader cannot see an overlap either.
+    const overlapping = await page.evaluate(() => {
+      const image = document.querySelector('[data-hero-artwork] img')
+      if (image === null) return ['no artwork band']
+      const band = image.getBoundingClientRect()
+
+      return [...document.querySelectorAll('h1, h2, p, a, span, label, button')]
+        .filter((node) => (node.textContent ?? '').trim().length > 0)
+        .filter((node) => {
+          const box = node.getBoundingClientRect()
+          return box.height > 0 && box.top < band.bottom && box.bottom > band.top
+        })
+        .map((node) => (node.textContent ?? '').trim().slice(0, 40))
+    })
+    expect(overlapping).toEqual([])
+  })
+
+  test('leaves the page alone when the buyer clears the artwork', async ({ page }) => {
+    await page.setViewportSize(MOBILE)
+    await page.goto('/preview/deckle-and-deboss?fixture=no-artwork')
+
+    await expect(page.locator('[data-hero-artwork]')).toHaveCount(0)
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Sarah & Tom')
+  })
+
   test('counts down to the instant the local pair resolves to, and keeps ticking', async ({
     page,
   }) => {

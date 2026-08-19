@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   BLOCK_TYPES,
+  CURRENT_DEFINITION_VERSION,
   CURRENT_THEME_VERSION,
   templateDefinitionPipeline,
   themePipeline,
@@ -30,7 +31,9 @@ describe('the committed template definition', () => {
     expect(outcome.ok).toBe(true)
     if (!outcome.ok) return
 
-    expect(outcome.document.version).toBe(1)
+    // Seeds are authored now, so they are authored at the current version and
+    // nothing has to be migrated to read them.
+    expect(outcome.document.version).toBe(CURRENT_DEFINITION_VERSION)
     expect(outcome.migrated).toBe(false)
 
     // Read the ids and types, do not just count the blocks. Order is the page
