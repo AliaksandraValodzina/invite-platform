@@ -41,6 +41,31 @@ Two exceptions, both deliberate and both narrow:
 - **The reading measure.** `max-w-prose` sits on `ThemeScope`, not in a block,
   and is expressed in `ch`, so it scales with whatever body face the theme sets.
 
+## The hero artwork band
+
+The artwork slot is the top of the page, and everything about how it is drawn
+follows from it being decoration rather than content.
+
+- **It carries `alt=""` and `aria-hidden`.** The format gives it no alt key, so
+  there is nothing to draw one from. That is the point: nobody should ever be
+  asked to transcribe words baked into somebody's artwork, and the placeholder
+  in the repo right now is a card with a name, a date and an address painted
+  into it. Announced, it would tell a guest the wrong wedding.
+- **Nothing is drawn on top of it.** Text on the band would be text whose
+  contrast is against a picture rather than against a token, which
+  `tests/unit/template/contrast.test.ts` cannot see and the theme schema cannot
+  constrain. `tests/e2e/blocks.spec.ts` asserts the emptiness by geometry in a
+  browser, because an overlap is a layout result rather than a fact about
+  markup.
+- **It is fetched lazily and at low priority.** The names are what a guest
+  opened the link to read, and they must not queue behind a JPEG on hotel wifi.
+- **It is the block's own element, in one wrapper.** `BlockSection` grew a
+  `bleed` slot rather than the hero reaching outside itself with a negative
+  margin, so the band spans the page canvas and starts at its top edge. The band
+  and the names lockup are one section that nothing outside positions, which is
+  what an envelope reveal would need in order to wrap, clip and animate the
+  composition as a unit.
+
 ## The token roles the block set actually consumes
 
 This is the list to check a chosen design direction against.
@@ -162,11 +187,17 @@ here so the next task does not rediscover it.
 - **No themed focus ring.** There is no focus token, so the browser's own focus
   ring is kept rather than a colour being invented for one. If a direction needs
   a designed focus state, that is a new role.
-- **No hero image dimensions.** The hero image is a plain `img`. `next/image`
-  needs either a host allowlist or stored dimensions and the format has neither:
-  an image src is any https URL and there is nowhere to put a width and a height.
-  Both arrive with buyer uploads, and until then a hero image can shift layout as
-  it loads.
+- **No hero image dimensions.** The hero image and the artwork band are plain
+  `img` elements. `next/image` needs either a host allowlist or stored
+  dimensions and the format has neither: a src is an https URL or an app served
+  path, and there is nowhere to put a width and a height. Both arrive with buyer
+  uploads, and until then either picture can shift layout as it loads.
+- **No crop, focal point or aspect ratio on the artwork.** The band is the shape
+  of the file. A ratio chosen here would be a ratio every future piece of
+  artwork had to agree with, and there is nowhere in the format to record which
+  part of a picture matters. The cost is real, and it is why the committed
+  placeholder is a crop rather than a whole card: artwork with words painted
+  into it renders with the words in it. See `docs/template-format.md`.
 - **No copy for the fields the format does not carry.** The RSVP name and
   attendance labels, the countdown unit names and the "Get directions" label are
   block set copy, because `fields` is a record of four optional questions and the
@@ -177,7 +208,9 @@ here so the next task does not rediscover it.
 
 `/preview/<theme>` renders the committed seed documents through the real
 `resolveEventPage`, so what is on screen is the same merge a guest page will
-serve. `?fixture=long-names` applies content overrides keyed by block id,
+serve. `?fixture=no-artwork` clears `hero.artwork` with a `null` override, which
+is how a direction is compared with the band and without it,
+`?fixture=long-names` applies content overrides keyed by block id,
 `?fixture=report-sample` is Emma & Jake at The Grounds of Alexandria, which is
 the content the three design directions were measured against, and
 `?rsvp=closed` shows the grace period state. `/preview` lists every theme with

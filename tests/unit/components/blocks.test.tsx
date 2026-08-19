@@ -140,6 +140,78 @@ describe('the hero', () => {
   })
 })
 
+describe('the hero artwork band', () => {
+  const ARTWORK = '/samples/unlicensed-placeholder/floral-band-UNLICENSED-PLACEHOLDER.jpg'
+
+  function artworkImg(markup: string): string | null {
+    return (
+      /<img[^>]*data-artwork-probe[^>]*>|<div data-hero-artwork="">(<img[^>]*>)/.exec(
+        markup
+      )?.[1] ?? null
+    )
+  }
+
+  it('draws the artwork the template names, at the very top of the page', () => {
+    const markup = render('hero')
+
+    // The band is the first thing inside the hero section, before the eyebrow,
+    // because "on top of the page I want to see invitation" is what it is for.
+    const band = markup.indexOf('data-hero-artwork')
+    const eyebrow = markup.indexOf('Together with their families')
+
+    expect(band).toBeGreaterThan(-1)
+    expect(band).toBeLessThan(eyebrow)
+    expect(markup).toContain(ARTWORK)
+  })
+
+  it("gives it empty alt text and hides it, so nobody hears somebody else's invitation read out", () => {
+    // The reason this matters more than it looks: the supplied placeholder is a
+    // whole card with a name, a date and an address painted into it. Announced,
+    // it would tell a guest the wrong wedding.
+    const img = artworkImg(render('hero'))
+
+    expect(img).not.toBeNull()
+    expect(img).toContain('alt=""')
+    expect(img).toContain('aria-hidden="true"')
+  })
+
+  it('keeps it off the critical path, because the names are what a guest came to read', () => {
+    const img = artworkImg(render('hero'))
+
+    expect(img).toContain('loading="lazy"')
+    expect(img).toContain('fetchPriority="low"')
+    expect(img).toContain('decoding="async"')
+  })
+
+  it('draws nothing at all when the template names no artwork', () => {
+    const markup = renderToStaticMarkup(
+      <HeroBlock blockId="hero" config={{ headline: 'Sarah & Tom' }} />
+    )
+
+    expect(markup).not.toContain('data-hero-artwork')
+    expect(markup).not.toContain('<img')
+  })
+
+  it('draws no text over it, so no contrast on this page is measured against a picture', () => {
+    // The contrast suite measures token against token. Text sitting on the
+    // artwork would be text whose legibility that suite cannot see, and the
+    // artwork is a placeholder whose replacement could be any colour at all.
+    const markup = render('hero')
+    const band = /<div data-hero-artwork="">.*?<\/div>/s.exec(markup)?.[0] ?? ''
+
+    expect(band).not.toBe('')
+    expect(band.replace(/<[^>]*>/g, '').trim()).toBe('')
+  })
+
+  it('sits in one wrapper the envelope reveal can clip and animate as a unit', () => {
+    // Not built, and not to be foreclosed. The band and the lockup are one
+    // section with no positioning reaching in from outside it.
+    const markup = render('hero')
+
+    expect(markup).toMatch(/<section[^>]*data-block-id="hero"[^>]*>\s*<div data-hero-artwork="">/)
+  })
+})
+
 describe('the details list', () => {
   it('reads the date and the time off the event row, formatted once', () => {
     const markup = render('event-details')

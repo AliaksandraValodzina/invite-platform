@@ -23,7 +23,7 @@
 
 import { z } from 'zod'
 
-import { httpsUrlSchema, optionalText, text } from './primitives'
+import { httpsUrlSchema, imageSourceSchema, optionalText, text } from './primitives'
 
 // hero ----------------------------------------------------------------------
 
@@ -33,6 +33,35 @@ export const heroConfigSchema = z.strictObject({
   subhead: optionalText(200),
   /** alt is required whenever an image is present. It is content, not polish. */
   image: z.strictObject({ src: httpsUrlSchema, alt: text(160) }).optional(),
+  /**
+   * Decorative invitation artwork, drawn as a band across the head of the page
+   * above the names. It is what makes the page read as an invitation rather
+   * than as a web page about a wedding.
+   *
+   * It is a second picture field rather than a mode on `image`, because the two
+   * are different kinds of thing and the difference is load bearing:
+   *
+   *   `image`   is CONTENT. It is a photograph of the couple, it means
+   *             something, and it therefore carries alt text.
+   *   `artwork` is DECORATION. It means nothing that the page does not already
+   *             say in words, so it carries no alt text at all and there is
+   *             nowhere to put any. The block draws it with `alt=""`.
+   *
+   * That is why the couple's names, date and venue must never be painted into
+   * it. A whole invitation card used here puts every one of them on the page
+   * twice: once as pixels in somebody else's typeface, and once as the real,
+   * themed, selectable text below. The format cannot enforce that, because it
+   * cannot read a JPEG, and the guided form will have to. What it can do is
+   * refuse to offer an alt field, so nobody is ever asked to transcribe the
+   * words baked into a picture.
+   *
+   * There is no frame or variant key yet. The design directions report
+   * specifies one, the stepped arch aperture that is Foil & Midnight's
+   * signature, and it is not built here. It arrives as a new OPTIONAL field,
+   * which by the rules in docs/template-format.md is a version bump with no
+   * rewrite.
+   */
+  artwork: z.strictObject({ src: imageSourceSchema }).optional(),
 })
 
 export type HeroConfig = z.infer<typeof heroConfigSchema>

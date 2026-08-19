@@ -97,9 +97,16 @@ export const PREVIEW_EVENT: EventSchedule = {
  * `report-sample` is the content the three directions were designed and
  * measured against, so it is the one to look at when judging a direction rather
  * than when testing the block set.
+ *
+ * `no-artwork` clears the hero artwork the template names, so each direction can
+ * be looked at with the band and without it. It is a real content override doing
+ * a real thing rather than a preview switch: `null` in an override means "clear
+ * this field", which is how a buyer deletes something out of the guided form, so
+ * this fixture also happens to be the only place that path is visible on screen.
  */
 export const PREVIEW_FIXTURES: Readonly<Record<string, unknown>> = {
   sample: { version: 1, blocks: {} },
+  'no-artwork': { version: 1, blocks: { hero: { artwork: null } } },
   'long-names': {
     version: 1,
     blocks: { hero: { headline: 'Alexandra & Christopher' } },

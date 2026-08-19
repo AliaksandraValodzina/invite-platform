@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "blocks": [
     {
       "id": "hero",
@@ -7,7 +7,10 @@
       "config": {
         "eyebrow": "Together with their families",
         "headline": "Sarah & Tom",
-        "subhead": "are getting married"
+        "subhead": "are getting married",
+        "artwork": {
+          "src": "/samples/unlicensed-placeholder/floral-band-UNLICENSED-PLACEHOLDER.jpg"
+        }
       }
     },
     {

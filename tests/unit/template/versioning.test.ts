@@ -5,14 +5,20 @@
  *   block schema changes.
  *
  * It is tested by actually changing block schemas, not by asserting a number.
- * Each case below builds a real version 2 of the format, with a real migration,
- * and runs the committed version 1 seed document through the same pipeline code
- * the product uses.
+ * Each case below builds a real NEXT version of the format, one rung above the
+ * current one, with a real migration, and runs the committed seed document
+ * through the same pipeline code the product uses.
  *
- * Every case also runs the same document through a version 2 that bumped the
+ * Every case also runs the same document through a next version that bumped the
  * number and forgot to write the migration, and asserts that it FAILS. That is
  * the fails-first evidence: without the migration these tests go red, so they
  * are testing the mechanism rather than describing it.
+ *
+ * The hypothetical pipelines are built on top of the REAL ladder rather than
+ * instead of it, so each case is also a stored document climbing more than one
+ * rung. `CLASSIC_INVITATION_V1` is the committed seed as it stood before the
+ * hero gained its artwork slot, and it is here so that the oldest shape the
+ * format ever had keeps being exercised as the ladder grows.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -21,6 +27,7 @@ import { z } from 'zod'
 import {
   BLOCK_CONFIG_SCHEMAS,
   CURRENT_DEFINITION_VERSION,
+  DEFINITION_MIGRATIONS,
   createDocumentPipeline,
   createTemplateDefinitionSchema,
   eventContentPipeline,
@@ -45,30 +52,94 @@ function blocksOf(document: JsonObject): StoredBlock[] {
  * What a careless version bump looks like: the number moves, nothing else does.
  * Used to prove each migration below is load bearing.
  */
+const NEXT_VERSION = CURRENT_DEFINITION_VERSION + 1
+
 const bumpOnly: DocumentMigration = {
-  from: 1,
-  to: 2,
+  from: CURRENT_DEFINITION_VERSION,
+  to: NEXT_VERSION,
   description: 'bumps the version and changes nothing',
-  migrate: (document) => ({ ...document, version: 2 }),
+  migrate: (document) => ({ ...document, version: NEXT_VERSION }),
 }
 
-function definitionPipelineV2(
+/**
+ * A format one version ahead of the shipped one, carrying the real ladder plus
+ * the hypothetical rung on top. Built from the real migrations rather than from
+ * a fresh list, so a stored document from any shipped version has to climb all
+ * the way up.
+ */
+function definitionPipelineNext(
   configSchemas: Record<string, z.ZodType>,
   migration: DocumentMigration
 ) {
   return createDocumentPipeline({
     name: 'template definition',
-    version: 2,
+    version: NEXT_VERSION,
     schema: createTemplateDefinitionSchema(configSchemas),
-    migrations: [migration],
+    migrations: [...DEFINITION_MIGRATIONS, migration],
   })
 }
 
-describe('the format starts at version 1 with nothing to migrate', () => {
-  it('has a version field on every document from the first commit', () => {
-    expect(CURRENT_DEFINITION_VERSION).toBe(1)
-    expect(templateDefinitionPipeline.migrations).toHaveLength(0)
-    expect((readSeedFile(CLASSIC_INVITATION) as JsonObject).version).toBe(1)
+/**
+ * The committed seed as it stood at definition version 1, before `hero.artwork`
+ * existed. A real stored row from before the change, kept here so the bottom of
+ * the ladder is exercised rather than described.
+ */
+function classicInvitationV1(): JsonObject {
+  const document = readSeedFile(CLASSIC_INVITATION) as JsonObject
+  return {
+    ...document,
+    version: 1,
+    blocks: blocksOf(document).map((block) => {
+      if (block.type !== 'hero') return block
+      const { artwork: _artwork, ...config } = block.config
+      return { ...block, config }
+    }),
+  }
+}
+
+describe('the shipped ladder', () => {
+  it('has a rung for every version below the current one', () => {
+    expect(templateDefinitionPipeline.migrations).toHaveLength(CURRENT_DEFINITION_VERSION - 1)
+    expect(templateDefinitionPipeline.migrations.map((step) => [step.from, step.to])).toEqual(
+      Array.from({ length: CURRENT_DEFINITION_VERSION - 1 }, (_, index) => [index + 1, index + 2])
+    )
+  })
+
+  it('authors the committed seed at the current version', () => {
+    expect((readSeedFile(CLASSIC_INVITATION) as JsonObject).version).toBe(
+      CURRENT_DEFINITION_VERSION
+    )
+  })
+
+  it('reads a version 1 document written before the artwork slot existed', () => {
+    const stored = classicInvitationV1()
+    const outcome = templateDefinitionPipeline.load(stored)
+
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+
+    expect(outcome.storedVersion).toBe(1)
+    expect(outcome.migrated).toBe(true)
+    expect(outcome.document.version).toBe(CURRENT_DEFINITION_VERSION)
+
+    // The hero renders exactly as it did before the slot existed: with no
+    // artwork, because the field is optional and the migration adds nothing.
+    const hero = outcome.document.blocks[0]
+    expect(hero?.config).toEqual({
+      eyebrow: 'Together with their families',
+      headline: 'Sarah & Tom',
+      subhead: 'are getting married',
+    })
+  })
+
+  it('refuses that same version 1 document on a write path', () => {
+    // A write path hands over a document it just built, so a stale version is a
+    // bug in the caller rather than an old row.
+    const outcome = templateDefinitionPipeline.load(classicInvitationV1(), { migrate: false })
+
+    expect(outcome.ok).toBe(false)
+    if (outcome.ok) return
+    expect(outcome.reason).toBe('stale-version')
   })
 })
 
@@ -76,25 +147,27 @@ describe('the format starts at version 1 with nothing to migrate', () => {
 // Adding to a block: a new required field
 // ---------------------------------------------------------------------------
 
-describe('a block schema gains a required field in version 2', () => {
+describe('a block schema gains a required field in the next version', () => {
   const heroV2 = heroConfigSchema.extend({ align: z.enum(['left', 'center']) })
   const schemasV2 = { ...BLOCK_CONFIG_SCHEMAS, hero: heroV2 }
 
   const heroGainsAlign: DocumentMigration = {
-    from: 1,
-    to: 2,
-    description: 'hero gains a required align field, set to the v1 rendering behaviour',
+    from: CURRENT_DEFINITION_VERSION,
+    to: NEXT_VERSION,
+    description: 'hero gains a required align field, set to the old rendering behaviour',
     migrate: (document) => ({
       ...document,
-      version: 2,
+      version: NEXT_VERSION,
       blocks: blocksOf(document).map((block) =>
         block.type === 'hero' ? { ...block, config: { ...block.config, align: 'center' } } : block
       ),
     }),
   }
 
-  it('rejects the version 1 event when the migration was forgotten', () => {
-    const outcome = definitionPipelineV2(schemasV2, bumpOnly).load(readSeedFile(CLASSIC_INVITATION))
+  it('rejects the stored event when the migration was forgotten', () => {
+    const outcome = definitionPipelineNext(schemasV2, bumpOnly).load(
+      readSeedFile(CLASSIC_INVITATION)
+    )
 
     expect(outcome.ok).toBe(false)
     if (outcome.ok) return
@@ -102,16 +175,16 @@ describe('a block schema gains a required field in version 2', () => {
     expect(outcome.issues.map((issue) => issue.path)).toContain('blocks.0.config.align')
   })
 
-  it('renders the version 1 event under version 2, with the buyer content intact', () => {
+  it('renders the stored event under the next version, with the buyer content intact', () => {
     const stored = readSeedFile(CLASSIC_INVITATION)
-    const outcome = definitionPipelineV2(schemasV2, heroGainsAlign).load(stored)
+    const outcome = definitionPipelineNext(schemasV2, heroGainsAlign).load(stored)
 
     expect(outcome.ok).toBe(true)
     if (!outcome.ok) return
 
-    expect(outcome.storedVersion).toBe(1)
+    expect(outcome.storedVersion).toBe(CURRENT_DEFINITION_VERSION)
     expect(outcome.migrated).toBe(true)
-    expect(outcome.document.version).toBe(2)
+    expect(outcome.document.version).toBe(NEXT_VERSION)
 
     const hero = outcome.document.blocks[0]
     expect(hero?.type).toBe('hero')
@@ -120,6 +193,9 @@ describe('a block schema gains a required field in version 2', () => {
       eyebrow: 'Together with their families',
       headline: 'Sarah & Tom',
       subhead: 'are getting married',
+      artwork: {
+        src: '/samples/unlicensed-placeholder/floral-band-UNLICENSED-PLACEHOLDER.jpg',
+      },
       align: 'center',
     })
 
@@ -133,12 +209,30 @@ describe('a block schema gains a required field in version 2', () => {
     ])
   })
 
-  it('leaves the stored document alone, so the row is still version 1', () => {
+  it('leaves the stored document alone, so the row is still at its own version', () => {
     const stored = readSeedFile(CLASSIC_INVITATION)
-    definitionPipelineV2(schemasV2, heroGainsAlign).load(stored)
+    definitionPipelineNext(schemasV2, heroGainsAlign).load(stored)
 
     expect(stored).toEqual(readSeedFile(CLASSIC_INVITATION))
-    expect((stored as JsonObject).version).toBe(1)
+    expect((stored as JsonObject).version).toBe(CURRENT_DEFINITION_VERSION)
+  })
+
+  it('carries a version 1 row all the way up, two rungs, with the migrated field on it', () => {
+    // The claim the ladder exists for: a row written before the artwork slot
+    // climbs the real rung and then the new one, and arrives renderable.
+    const outcome = definitionPipelineNext(schemasV2, heroGainsAlign).load(classicInvitationV1())
+
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+
+    expect(outcome.storedVersion).toBe(1)
+    expect(outcome.document.version).toBe(NEXT_VERSION)
+    expect(outcome.document.blocks[0]?.config).toEqual({
+      eyebrow: 'Together with their families',
+      headline: 'Sarah & Tom',
+      subhead: 'are getting married',
+      align: 'center',
+    })
   })
 })
 
@@ -146,27 +240,29 @@ describe('a block schema gains a required field in version 2', () => {
 // Renaming a block type: the harder direction
 // ---------------------------------------------------------------------------
 
-describe('a block type is renamed in version 2', () => {
+describe('a block type is renamed in the next version', () => {
   // `map` becomes `venue`, because the block is about a place and only
   // sometimes draws a map.
   const { map: _map, ...withoutMap } = BLOCK_CONFIG_SCHEMAS
   const schemasV2 = { ...withoutMap, venue: mapConfigSchema }
 
   const mapBecomesVenue: DocumentMigration = {
-    from: 1,
-    to: 2,
+    from: CURRENT_DEFINITION_VERSION,
+    to: NEXT_VERSION,
     description: 'the map block type is renamed to venue',
     migrate: (document) => ({
       ...document,
-      version: 2,
+      version: NEXT_VERSION,
       blocks: blocksOf(document).map((block) =>
         block.type === 'map' ? { ...block, type: 'venue' } : block
       ),
     }),
   }
 
-  it('rejects the version 1 event when the migration was forgotten', () => {
-    const outcome = definitionPipelineV2(schemasV2, bumpOnly).load(readSeedFile(CLASSIC_INVITATION))
+  it('rejects the stored event when the migration was forgotten', () => {
+    const outcome = definitionPipelineNext(schemasV2, bumpOnly).load(
+      readSeedFile(CLASSIC_INVITATION)
+    )
 
     expect(outcome.ok).toBe(false)
     if (outcome.ok) return
@@ -177,7 +273,7 @@ describe('a block type is renamed in version 2', () => {
   })
 
   it('rewrites the type and does not touch the block id', () => {
-    const outcome = definitionPipelineV2(schemasV2, mapBecomesVenue).load(
+    const outcome = definitionPipelineNext(schemasV2, mapBecomesVenue).load(
       readSeedFile(CLASSIC_INVITATION)
     )
 
@@ -214,7 +310,7 @@ describe('a block type is renamed in version 2', () => {
         themeOverride: { version: 1, tokens: {} },
       },
       {
-        definition: definitionPipelineV2(schemasV2, mapBecomesVenue),
+        definition: definitionPipelineNext(schemasV2, mapBecomesVenue),
         content: eventContentPipeline,
         theme: themePipeline,
         themeOverride: themeOverridePipeline,
@@ -242,14 +338,14 @@ describe('a block type is renamed in version 2', () => {
 // Removing a block: the hardest direction
 // ---------------------------------------------------------------------------
 
-describe('a block is removed from a template in version 2', () => {
+describe('a block is removed from a template in the next version', () => {
   const countdownRemoved: DocumentMigration = {
-    from: 1,
-    to: 2,
+    from: CURRENT_DEFINITION_VERSION,
+    to: NEXT_VERSION,
     description: 'the countdown block is dropped from the block list',
     migrate: (document) => ({
       ...document,
-      version: 2,
+      version: NEXT_VERSION,
       blocks: blocksOf(document).filter((block) => block.type !== 'countdown'),
     }),
   }
@@ -260,7 +356,7 @@ describe('a block is removed from a template in version 2', () => {
   const schemasV2 = BLOCK_CONFIG_SCHEMAS
 
   it('drops the block from the page', () => {
-    const outcome = definitionPipelineV2(schemasV2, countdownRemoved).load(
+    const outcome = definitionPipelineNext(schemasV2, countdownRemoved).load(
       readSeedFile(CLASSIC_INVITATION)
     )
 
@@ -294,7 +390,7 @@ describe('a block is removed from a template in version 2', () => {
         themeOverride: { version: 1, tokens: {} },
       },
       {
-        definition: definitionPipelineV2(schemasV2, countdownRemoved),
+        definition: definitionPipelineNext(schemasV2, countdownRemoved),
         content: eventContentPipeline,
         theme: themePipeline,
         themeOverride: themeOverridePipeline,

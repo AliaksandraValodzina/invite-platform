@@ -46,22 +46,80 @@ export const hexColourSchema = z
  * https only, for every URL anywhere in the format. `javascript:` and `data:`
  * are the reason, and mixed content warnings on a guest page are the other one.
  */
-export const httpsUrlSchema = z
+export const httpsUrlSchema = z.string().max(2048).superRefine(checkHttpsUrl)
+
+function checkHttpsUrl(value: string, ctx: z.RefinementCtx): void {
+  let parsed: URL
+  try {
+    parsed = new URL(value)
+  } catch {
+    ctx.addIssue({ code: 'custom', message: 'must be an absolute URL' })
+    return
+  }
+
+  if (parsed.protocol !== 'https:') {
+    ctx.addIssue({
+      code: 'custom',
+      message: `must use https, got "${parsed.protocol}"`,
+    })
+  }
+}
+
+/**
+ * A path to a file this app serves itself, such as
+ * `/samples/unlicensed-placeholder/floral-band-UNLICENSED-PLACEHOLDER.jpg`.
+ *
+ * It exists because the template line ships artwork of its own. Artwork that
+ * arrives from a third party host is a request a guest page makes to somebody
+ * else's server on bad wifi, and it is a URL that can stop resolving long after
+ * the invitation was sent. An app served path has neither problem.
+ *
+ * It is a path and never a URL, so there is no origin to get wrong and no
+ * protocol to downgrade. Two shapes are rejected on top of that: a leading `//`,
+ * which a browser reads as a protocol relative URL to another host, and a `..`
+ * segment, which is a way to aim a stored document at something outside the
+ * asset directory.
+ *
+ * The extension list is closed and holds no `svg`. An SVG is a document that can
+ * carry script, and one served from our own origin would be same origin with
+ * the guest page.
+ */
+const APP_ASSET_PATH = /^\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.(?:avif|webp|png|jpe?g)$/
+
+/**
+ * Where a picture on a guest page may come from: an https URL, or a file this
+ * app serves. One schema rather than a union so that a bad value gets the
+ * message for the kind of source it was clearly trying to be, instead of "no
+ * branch matched".
+ */
+export const imageSourceSchema = z
   .string()
   .max(2048)
   .superRefine((value, ctx) => {
-    let parsed: URL
-    try {
-      parsed = new URL(value)
-    } catch {
-      ctx.addIssue({ code: 'custom', message: 'must be an absolute URL' })
+    if (!value.startsWith('/')) {
+      checkHttpsUrl(value, ctx)
       return
     }
 
-    if (parsed.protocol !== 'https:') {
+    if (value.startsWith('//')) {
       ctx.addIssue({
         code: 'custom',
-        message: `must use https, got "${parsed.protocol}"`,
+        message: 'must not start with "//", which a browser reads as another host',
+      })
+      return
+    }
+
+    if (value.split('/').includes('..')) {
+      ctx.addIssue({ code: 'custom', message: 'must not contain a ".." segment' })
+      return
+    }
+
+    if (!APP_ASSET_PATH.test(value)) {
+      ctx.addIssue({
+        code: 'custom',
+        message:
+          'must be an app served path ending in .avif, .webp, .png, .jpg or .jpeg, ' +
+          'or an absolute https URL',
       })
     }
   })

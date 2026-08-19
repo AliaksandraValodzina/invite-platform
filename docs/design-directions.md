@@ -23,10 +23,12 @@ npm run dev
 open http://localhost:3000/preview
 ```
 
-`/preview` lists all three with links. Each direction has three fixtures:
+`/preview` lists all three with links. Each direction has four fixtures:
 
 - `?fixture=report-sample` is Emma & Jake at The Grounds of Alexandria on 14
   March 2027, the content the directions were designed and measured against.
+- `?fixture=no-artwork` clears the hero artwork band, so a direction can be seen
+  with it and without it.
 - `?fixture=long-names` is Alexandra & Christopher, which is the fixture the
   320px overflow test uses.
 - `?fixture=sample` is the template's own default copy.
@@ -139,13 +141,39 @@ The report's other recommendation in this finding, a fluid display size, is not
 made: it is a token schema change, and it is listed above with the desktop
 column it belongs next to.
 
+## The artwork band, and how each direction takes it
+
+The captain asked on 2026-08-20 to see an invitation at the top of the page, and
+supplied one example with the plain statement that they would find more suitable
+images later. The template therefore names a placeholder, cropped to its florals
+so the card's own printed text stays out of frame:
+`public/samples/unlicensed-placeholder/`. **Its rights are unestablished and it
+must not ship.**
+
+It is rendered exactly as supplied in all three directions. Nothing recolours,
+tints or filters it, because how it sits against each palette is the thing to
+judge, and a filter applied to make it behave would be a judgement made on the
+captain's behalf without saying so. What is on screen:
+
+| Direction       | `bg`      | How the placeholder sits                                                                                                                                                                                          |
+| --------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Masthead        | `#fcfbfa` | Best of the three. The artwork's white ground is within a shade of the page, so the band reads as printing rather than as a pasted rectangle. The hot pink still argues with the ultramarine accent further down. |
+| Deckle & Deboss | `#f3f1ec` | A visible seam. The warm paper is a step darker than the artwork's white, so the band's bottom edge shows as a straight line. Watercolour is also the opposite gesture from single ink letterpress.               |
+| Foil & Midnight | `#131a2b` | Fails. A white slab across the top of a midnight page, with a hard horizontal edge, and nothing about hot pink and orange belongs next to brass on midnight.                                                      |
+
+The fix for the two that fail is artwork, not code and not tokens: a band on a
+transparent or theme matched ground, drawn in each direction's own palette. That
+is the sourcing decision this placeholder is waiting on.
+
 ### The arch does not fit the radius token
 
 Followed as the report resolved it: `radius` stays uniform at `sm md lg pill`
 across every theme, and the arch is not a token. A theme document that adds an
 `arch` key is rejected, and there is a test that loads one to prove it. The arch
 is a variant of the media block selected by the template JSON, which is
-definition work rather than theme work, and it is not built here. Neither are the
+definition work rather than theme work, and it is still not built. The slot it
+would attach to now exists: `hero.artwork` is named by the template, and a
+`frame` value is the shape the variant takes when somebody builds it. Neither are the
 other two signature elements, for the same reason: none of the three is
 expressible in tokens.
 
