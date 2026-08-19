@@ -3,9 +3,15 @@
 Interactive invitation websites. See `AGENTS.md` for the product contract and the
 constraints that are binding on every change.
 
-This repo is currently at Phase 0.1: the application shell and the CI gate. There is
-no Supabase client, no schema, no template format and no auth yet. Those are separate
-tasks.
+This repo carries the application shell and CI gate (Phase 0.1) and the template
+definition format (Phase 0.3). There is no Supabase client, no renderer and no auth
+yet. Those are separate tasks.
+
+The template format is the product's file format: three versioned JSON documents,
+five block types, and theme tokens kept out of content. It lives in
+`src/lib/template/`, its seed files are in `templates/`, and
+`docs/template-format.md` explains the shape and how it changes over time.
+Nothing in it renders anything.
 
 ## Requirements
 

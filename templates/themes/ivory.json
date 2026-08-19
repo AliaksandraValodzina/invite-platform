@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "tokens": {
+    "color": {
+      "bg": "#fdfbf7",
+      "surface": "#ffffff",
+      "ink": "#23201c",
+      "inkMuted": "#6f6a61",
+      "accent": "#9a7b4f",
+      "accentInk": "#ffffff",
+      "border": "#e6ded1",
+      "critical": "#b3261e"
+    },
+    "font": {
+      "heading": "'Cormorant Garamond', Georgia, serif",
+      "body": "'Inter', system-ui, sans-serif"
+    },
+    "typeScale": {
+      "display": { "size": 2.5, "lineHeight": 1.1, "weight": 400, "tracking": 0.01 },
+      "title": { "size": 1.5, "lineHeight": 1.25, "weight": 500 },
+      "body": { "size": 1, "lineHeight": 1.6, "weight": 400 },
+      "caption": { "size": 0.8125, "lineHeight": 1.4, "weight": 500, "tracking": 0.06 }
+    },
+    "space": { "xs": 0.5, "sm": 0.75, "md": 1.25, "lg": 2, "xl": 3.5 },
+    "radius": { "sm": 0.25, "md": 0.75, "lg": 1.5, "pill": 999 }
+  }
+}
