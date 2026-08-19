@@ -1,0 +1,6 @@
+@import 'tailwindcss';
+
+/*
+ * Deliberately no design tokens here yet. Theme tokens are a separate task and
+ * they belong to the template format, not to the app shell.
+ */

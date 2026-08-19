@@ -33,6 +33,7 @@ These are the reason Phase 0 exists. Treat them as binding.
 - **OG/meta tags are a feature, not polish.** The share-card preview in WhatsApp is how an invitation spreads, and it is the first impression of the product.
 - **404, expired and unpublished states are designed, never default error pages.** Guests hit them at emotional moments and it reflects on the buyer's shop reviews.
 - **Countdowns are timezone-correct.** Event date after hosting expiry, and timezone boundaries, are known edge cases.
+- **This repo is public. Never commit a secret.** No Supabase service-role key, no Resend or Postmark key, no activation-code secret, no database URL with a password. They live in GitHub and Vercel environment secrets, and only `NEXT_PUBLIC_` values ever belong in the repo.
 - **RSVP data is guests' PII** — names, emails, dietary and health notes. That means a privacy policy, Australian Privacy Act awareness, GDPR if EU guests RSVP, and retention/deletion rules when events expire. Do not add a field to the RSVP form without saying what happens to it at expiry.
 
 ## Testing

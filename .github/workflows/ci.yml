@@ -1,0 +1,328 @@
+# The pull request gate.
+#
+# Owned by the Phase 0.1 scaffolding task. If another task needs CI to do
+# something new, for example the Postgres service container the schema task will
+# need in order to run migrations and prove RLS policies, send the requirement
+# rather than editing this file. Two tasks editing one workflow produces runs
+# nobody can attribute. There is a worked example of how a database job slots in
+# at the bottom of this file.
+#
+# Two properties this file is built around, both of which have tests:
+#
+#   1. `CI gate` is the single required status check, and it fails closed. A job
+#      that was skipped when it should have run makes it red. See
+#      .github/scripts/ci-gate.sh and its tests.
+#   2. This repo is private, so Actions minutes are metered and GitHub rounds
+#      every job up to a whole minute. Job count is therefore a direct cost, and
+#      the expensive work is skipped when it cannot tell us anything.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Pinned so a Node release cannot change the result of a green run.
+  NODE_VERSION: '24.10.0'
+
+jobs:
+  # Also decides whether Playwright needs to run. That decision used to live in
+  # a job of its own, which was correct but cost a full billed minute for about
+  # fifteen seconds of work, because of the per job rounding. Folding it in here
+  # saves a minute on every pull request. The trade is that Playwright now waits
+  # for the checks below instead of starting alongside them, which costs wall
+  # clock but not money, and means a pull request that fails lint never pays for
+  # a browser run it was never going to reach.
+  static:
+    name: typecheck, lint, format, unit tests
+    runs-on: ubuntu-latest
+    outputs:
+      e2e: ${{ steps.filter.outputs.e2e }}
+      duration: ${{ steps.duration.outputs.seconds }}
+    steps:
+      - name: Record start time
+        run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v5
+        with:
+          # Full history, so the diff can be taken from the merge base.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run format
+      - run: npm test
+
+      # The gate decides whether a pull request can merge, so its logic is
+      # tested like anything else. No dependencies beyond jq, which the runner
+      # already has, so it adds no measurable time to this job.
+      - name: Test the CI gate logic
+        run: bash .github/scripts/ci-gate.test.sh
+
+      - name: Decide whether Playwright can exercise this diff
+        id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "Not a pull request, so the full suite runs."
+            echo "e2e=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Diff from the merge base, not the base tip. Diffing the tip also
+          # picks up commits that landed on main after this branch was cut,
+          # which would run Playwright for changes that are not ours.
+          merge_base=$(git merge-base "$BASE_SHA" "$HEAD_SHA")
+          changed=$(git diff --name-only "$merge_base" "$HEAD_SHA")
+
+          echo "Merge base: $merge_base"
+          echo "Changed files:"
+          echo "$changed"
+
+          # An empty diff matches nothing, which the filter below would read as
+          # "skip". That is the one shape where a filter bug hides a regression,
+          # so an empty diff runs Playwright rather than trusting the filter.
+          if [ -z "$changed" ]; then
+            echo "Empty diff, running Playwright rather than trusting the filter."
+            echo "e2e=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Anything that can alter rendered output, routing, the build, or the
+          # browser suite itself. Docs, unit tests and lint config are excluded
+          # on purpose, because the steps above already cover them.
+          if echo "$changed" | grep -Eq '^(src/|public/|tests/e2e/|playwright\.config\.ts$|next\.config\.ts$|postcss\.config\.mjs$|package\.json$|package-lock\.json$|\.github/workflows/ci\.yml$)'; then
+            echo "e2e=true" >> "$GITHUB_OUTPUT"
+            echo "Playwright will run."
+          else
+            echo "e2e=false" >> "$GITHUB_OUTPUT"
+            echo "Playwright skipped: no file it can exercise changed."
+          fi
+
+      - name: Report job duration
+        id: duration
+        if: ${{ !cancelled() }}
+        run: |
+          seconds=$(( $(date +%s) - JOB_START ))
+          echo "seconds=$seconds" >> "$GITHUB_OUTPUT"
+          echo "static finished in ${seconds}s" >> "$GITHUB_STEP_SUMMARY"
+
+  e2e:
+    name: playwright smoke
+    needs: static
+    if: ${{ needs.static.outputs.e2e == 'true' }}
+    runs-on: ubuntu-latest
+    outputs:
+      duration: ${{ steps.duration.outputs.seconds }}
+    steps:
+      - name: Record start time
+        run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+
+      # No Supabase project and no Vercel link exist yet, so the build runs with
+      # no service variables set. That is the state it has to succeed in.
+      - name: Build
+        run: npm run build
+
+      # Downloading chromium is the single most expensive step in the whole
+      # gate. Measured locally at 113s cold against 3s warm, which on a metered
+      # private repo is worth about two billed minutes per run. The key is the
+      # lockfile hash, so pinning a new Playwright invalidates it automatically.
+      - name: Cache Playwright browser
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      # Only chromium, and deliberately without `--with-deps`.
+      #
+      # The first green run measured this step at 299s, which was 88% of the
+      # whole job. Almost all of that is the apt-get work that `--with-deps`
+      # does, not the browser download, which is about 110s. Runners are
+      # ephemeral, so apt cannot be cached: `install-deps` would pay that cost
+      # again on every run, cache hit or not.
+      #
+      # The ubuntu-latest image already carries the shared libraries chromium
+      # links against, so the deps install is redundant here. If that ever stops
+      # being true the smoke tests fail immediately and loudly at browser
+      # launch, which is the right way to find out, and the fix is to restore
+      # `--with-deps` on this line.
+      - name: Install Playwright browser
+        run: npx playwright install chromium
+
+      - name: Run Playwright smoke tests
+        run: npm run test:e2e
+
+      - uses: actions/upload-artifact@v5
+        if: ${{ failure() }}
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
+      - name: Report job duration
+        id: duration
+        if: ${{ !cancelled() }}
+        run: |
+          seconds=$(( $(date +%s) - JOB_START ))
+          echo "seconds=$seconds" >> "$GITHUB_OUTPUT"
+          echo "e2e finished in ${seconds}s" >> "$GITHUB_STEP_SUMMARY"
+
+  # The single required status check. Set branch protection to require this and
+  # nothing else: requiring `playwright smoke` directly would block every pull
+  # request where it is legitimately skipped.
+  #
+  # It is handed the whole `needs` context rather than a hand written list of
+  # job names, so a job added to `needs` is required to succeed from the moment
+  # it is added. Exempting one takes a deliberate CONDITIONAL_JOBS entry, which
+  # is the difference between failing closed and failing open.
+  gate:
+    name: CI gate
+    if: ${{ always() }}
+    needs: [static, e2e]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Record start time
+        run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v5
+
+      # Unconditional. A gate whose failure depends on an `if:` expression
+      # evaluating correctly is a gate that passes when the expression is wrong.
+      - name: Check every job against the decision that was made
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          # Every job named here is allowed to be skipped, but only when its
+          # decision says so. Everything else must succeed.
+          CONDITIONAL_JOBS: |
+            e2e=${{ needs.static.outputs.e2e }}
+        shell: bash
+        run: |
+          # pipefail, because the default shell is `bash -e` without it and the
+          # pipe would hand the step tee's exit code instead of the gate's.
+          set -o pipefail
+          bash .github/scripts/ci-gate.sh | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # Runs even when the gate above went red, so a failing run still reports
+      # what it cost. A later step succeeding does not clear an earlier failure,
+      # so this cannot turn a red gate green.
+      #
+      # GitHub rounds every job up to a whole minute, so the billed column, not
+      # the wall clock column, is what the bill is made of. Skipped jobs are free.
+      - name: Report what this run cost
+        if: ${{ always() }}
+        env:
+          STATIC_RESULT: ${{ needs.static.result }}
+          STATIC_SECONDS: ${{ needs.static.outputs.duration }}
+          E2E_RESULT: ${{ needs.e2e.result }}
+          E2E_SECONDS: ${{ needs.e2e.outputs.duration }}
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          gate_seconds=$(( $(date +%s) - JOB_START ))
+          total=0
+
+          row () { # name result seconds
+            local name=$1 result=$2 seconds=${3:-} mins shown
+            if [ "$result" = "skipped" ]; then
+              echo "| $name | skipped | not run | 0 |"
+              return
+            fi
+            # A job that died before its reporting step leaves this empty, so
+            # say so rather than printing a confident zero.
+            if [ -z "$seconds" ]; then shown="unknown"; else shown="${seconds}s"; fi
+            mins=$(( ( ${seconds:-0} + 59 ) / 60 ))
+            total=$(( total + mins ))
+            echo "| $name | $result | $shown | $mins |"
+          }
+
+          {
+            echo "## What this run cost"
+            echo ""
+            echo "| Job | Result | Wall clock | Billed minutes |"
+            echo "| --- | --- | --- | --- |"
+            row "static" "$STATIC_RESULT" "$STATIC_SECONDS"
+            row "e2e"    "$E2E_RESULT"    "$E2E_SECONDS"
+            row "gate"   "success"        "$gate_seconds"
+            echo ""
+            echo "**Total billed: ${total} minute(s).**"
+            echo ""
+            echo "GitHub rounds each job up to a whole minute, so short jobs are not cheap ones. Skipped jobs are not billed."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+# ---------------------------------------------------------------------------
+# Room for the schema task's database job
+# ---------------------------------------------------------------------------
+#
+# The schema task needs to run migrations and prove RLS policies in CI, which
+# means Postgres. Send the requirement to firstmate and it gets added here. It
+# is written out rather than described so the shape is not re-litigated:
+#
+#   database:
+#     name: migrations, policies and RLS
+#     runs-on: ubuntu-latest
+#     outputs:
+#       duration: ${{ steps.duration.outputs.seconds }}
+#     services:
+#       postgres:
+#         image: postgres:17            # pin the major, match what Supabase runs
+#         env:
+#           POSTGRES_PASSWORD: postgres
+#         options: >-
+#           --health-cmd pg_isready
+#           --health-interval 10s
+#           --health-timeout 5s
+#           --health-retries 5
+#         ports: ['5432:5432']
+#     steps:
+#       - ... checkout, setup-node, npm ci
+#       - run: supabase db push        # or psql against the migrations directory
+#         env:
+#           DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+#       - run: npm run test:rls        # must assert a denied read, not just an allowed one
+#
+# Three things whoever adds it has to get right:
+#
+#   1. Add `database` to the gate's `needs`. That is all that is required to
+#      make it enforced: the gate reads the whole `needs` context, so a failing
+#      or skipped database job turns the required check red without anyone
+#      editing ci-gate.sh. There are tests for exactly this in ci-gate.test.sh.
+#   2. Only add a CONDITIONAL_JOBS entry if it should be path filtered, and if
+#      so, add `supabase/` to the filter above and emit a second decision. An
+#      unfiltered database job is the safer default and costs one billed minute.
+#   3. A service container is billed as part of the job that declares it, so
+#      this is roughly one to two more billed minutes per pull request. Worth
+#      knowing before it lands, given the repo is private and metered.
+#
+# An RLS test that only asserts an allowed read passes against a table with RLS
+# switched off entirely. The interesting assertion is the denied one.
