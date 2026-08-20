@@ -29,7 +29,16 @@
 
 import { execFileSync } from 'node:child_process'
 
-const TABLES = ['accounts', 'templates', 'events', 'event_content', 'rsvps', 'activation_codes']
+const TABLES = [
+  'accounts',
+  'templates',
+  'events',
+  'event_content',
+  'rsvps',
+  'rsvp_questions',
+  'rsvp_answers',
+  'activation_codes',
+]
 
 function resolveConfig() {
   let { SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY } = process.env
@@ -135,7 +144,7 @@ const svc = { key: config.serviceKey }
 const anon = { key: config.anonKey }
 
 const stamp = Date.now().toString(36)
-const created = { users: [], template: null, event: null, rsvp: null }
+const created = { users: [], template: null, event: null, question: null, rsvp: null }
 
 async function seed() {
   const owner = await auth('admin/users', {
@@ -193,22 +202,39 @@ async function seed() {
   if (!event.ok) throw new Error(`seeding event failed: ${describe(event)}`)
   created.event = event.json[0]
 
-  const rsvp = await rest('rsvps', {
+  const question = await rest('rsvp_questions', {
     ...svc,
     method: 'POST',
     prefer: 'return=representation',
     body: {
       owner_id: owner.id,
       event_id: created.event.id,
-      attendance: 'attending',
-      party_size: 2,
-      guest_name: `Probe Guest ${stamp}`,
-      guest_email: `guest-${stamp}@example.test`,
-      dietary_notes: 'severe nut allergy',
-      message: 'Looking forward to it',
+      type: 'long_answer',
+      prompt: 'Anything we should know about food?',
+      position: 1,
+      required: true,
+      pii_class: 'sensitive',
     },
   })
-  if (!rsvp.ok) throw new Error(`seeding rsvp failed: ${describe(rsvp)}`)
+  if (!question.ok) throw new Error(`seeding question failed: ${describe(question)}`)
+  created.question = question.json[0]
+
+  // Through the same function the API route calls, so what this probes is the
+  // path a reply actually takes rather than a hand written insert.
+  const stored = await rest('rpc/submit_rsvp', {
+    ...svc,
+    method: 'POST',
+    body: {
+      p_slug: `anon-probe-${stamp}`,
+      p_attendance: 'attending',
+      p_party_size: 2,
+      p_answers: [{ question_id: created.question.id, value_text: 'severe nut allergy' }],
+    },
+  })
+  if (!stored.ok) throw new Error(`storing rsvp failed: ${describe(stored)}`)
+
+  const rsvp = await rest(`rsvps?id=eq.${stored.json.rsvp_id}&select=*`, svc)
+  if (!rsvp.ok) throw new Error(`reading back the rsvp failed: ${describe(rsvp)}`)
   created.rsvp = rsvp.json[0]
 
   const strangerSession = await auth('token?grant_type=password', {
@@ -250,12 +276,17 @@ async function main() {
   // empty database.
   console.log('The seeded data is real')
   const seedCheck = await rest(
-    `rsvps?select=guest_name,dietary_notes&id=eq.${created.rsvp.id}`,
+    `rsvp_answers?select=value_text,pii_class&rsvp_id=eq.${created.rsvp.id}`,
     svc
   )
   check(
-    'the service role can read the seeded RSVP, including its dietary note',
-    seedCheck.ok && seedCheck.json?.[0]?.dietary_notes === 'severe nut allergy',
+    'the service role can read the seeded reply, including its dietary note',
+    seedCheck.ok && seedCheck.json?.[0]?.value_text === 'severe nut allergy',
+    describe(seedCheck)
+  )
+  check(
+    'and the answer carries the class the retention sweep reads, copied from the question',
+    seedCheck.ok && seedCheck.json?.[0]?.pii_class === 'sensitive',
     describe(seedCheck)
   )
   const seedEvent = await rest(`events?select=slug&slug=eq.anon-probe-${stamp}`, svc)
@@ -282,11 +313,18 @@ async function main() {
     describe(anonEventBySlug)
   )
 
-  const anonGuestName = await rest(`rsvps?select=guest_name,guest_email,dietary_notes`, anon)
+  const anonAnswers = await rest(`rsvp_answers?select=value_text,value_choice,pii_class`, anon)
   check(
     'anon cannot read guest names, emails or dietary notes',
-    denied(anonGuestName),
-    describe(anonGuestName)
+    denied(anonAnswers),
+    describe(anonAnswers)
+  )
+
+  const anonQuestions = await rest(`rsvp_questions?select=prompt`, anon)
+  check(
+    'anon cannot even read which questions an event asks',
+    denied(anonQuestions),
+    describe(anonQuestions)
   )
 
   console.log('\nAn anonymous client can write nothing')
@@ -314,10 +352,40 @@ async function main() {
       event_id: created.event.id,
       attendance: 'attending',
       party_size: 1,
-      guest_name: 'Written by anon',
     },
   })
   check('anon cannot insert an RSVP directly', !anonInsertRsvp.ok, describe(anonInsertRsvp))
+
+  const anonInsertAnswer = await rest('rsvp_answers', {
+    ...anon,
+    method: 'POST',
+    body: {
+      owner_id: owner.id,
+      event_id: created.event.id,
+      rsvp_id: created.rsvp.id,
+      question_id: created.question.id,
+      question_prompt: 'Written by anon',
+      question_type: 'short_answer',
+      pii_class: 'none',
+      value_text: 'Written by anon',
+    },
+  })
+  check('anon cannot insert an answer directly', !anonInsertAnswer.ok, describe(anonInsertAnswer))
+
+  // The reply path itself. It runs as the service role from an API route, and a
+  // guest reaching PostgREST with the publishable key must not be able to call
+  // it: that would be an unrated, unvalidated write path with no honeypot.
+  const anonSubmit = await rest('rpc/submit_rsvp', {
+    ...anon,
+    method: 'POST',
+    body: {
+      p_slug: `anon-probe-${stamp}`,
+      p_attendance: 'attending',
+      p_party_size: 1,
+      p_answers: [],
+    },
+  })
+  check('anon cannot call submit_rsvp', !anonSubmit.ok, describe(anonSubmit))
 
   const anonUpdateEvent = await rest(`events?id=eq.${created.event.id}`, {
     ...anon,
@@ -341,15 +409,28 @@ async function main() {
 
   // Nothing above should have changed anything. Read it back rather than
   // assuming.
-  const afterWrites = await rest(`rsvps?select=guest_name&id=eq.${created.rsvp.id}`, svc)
+  const afterWrites = await rest(
+    `rsvp_answers?select=value_text&rsvp_id=eq.${created.rsvp.id}`,
+    svc
+  )
   check(
-    'the seeded RSVP still exists and is unchanged after every anonymous write attempt',
-    afterWrites.ok && afterWrites.json?.[0]?.guest_name === `Probe Guest ${stamp}`,
+    'the seeded reply still exists and is unchanged after every anonymous write attempt',
+    afterWrites.ok &&
+      afterWrites.json?.length === 1 &&
+      afterWrites.json?.[0]?.value_text === 'severe nut allergy',
     describe(afterWrites)
   )
 
   console.log('\nA signed-in stranger can read nothing of someone else')
-  for (const table of ['events', 'rsvps', 'templates', 'event_content', 'activation_codes']) {
+  for (const table of [
+    'events',
+    'rsvps',
+    'rsvp_questions',
+    'rsvp_answers',
+    'templates',
+    'event_content',
+    'activation_codes',
+  ]) {
     const result = await rest(`${table}?select=*`, { key: config.anonKey, token: strangerToken })
     check(
       `a signed-in stranger sees no rows in ${table}`,
@@ -384,13 +465,13 @@ async function main() {
   )
 
   console.log('\nThe owner can do exactly what they should')
-  const ownerReads = await rest(`rsvps?select=guest_name,dietary_notes`, {
+  const ownerReads = await rest(`rsvp_answers?select=question_prompt,value_text`, {
     key: config.anonKey,
     token: ownerToken,
   })
   check(
-    'the owner reads their own RSVPs including the fields they need',
-    ownerReads.ok && ownerReads.json?.[0]?.guest_name === `Probe Guest ${stamp}`,
+    'the owner reads what their own guests wrote',
+    ownerReads.ok && ownerReads.json?.[0]?.value_text === 'severe nut allergy',
     describe(ownerReads)
   )
 
@@ -403,13 +484,42 @@ async function main() {
       event_id: created.event.id,
       attendance: 'attending',
       party_size: 1,
-      guest_name: 'Owner wrote this',
     },
   })
   check(
     'even the owner cannot insert an RSVP directly: that path is the service role',
     !ownerInsertsRsvp.ok,
     describe(ownerInsertsRsvp)
+  )
+
+  const ownerEditsAnswer = await rest(`rsvp_answers?rsvp_id=eq.${created.rsvp.id}`, {
+    key: config.anonKey,
+    token: ownerToken,
+    method: 'PATCH',
+    body: { value_text: 'Edited by the buyer' },
+  })
+  const answerAfter = await rest(
+    `rsvp_answers?select=value_text&rsvp_id=eq.${created.rsvp.id}`,
+    svc
+  )
+  check(
+    'a buyer cannot edit what a guest wrote about their own allergies',
+    answerAfter.ok && answerAfter.json?.[0]?.value_text === 'severe nut allergy',
+    `patch: ${describe(ownerEditsAnswer)} / after: ${describe(answerAfter)}`
+  )
+
+  // Retire, never delete. The privilege is absent as well as the policy, so a
+  // buyer tidying their form cannot take replies with it.
+  const ownerDeletesQuestion = await rest(`rsvp_questions?id=eq.${created.question.id}`, {
+    key: config.anonKey,
+    token: ownerToken,
+    method: 'DELETE',
+  })
+  const questionAfter = await rest(`rsvp_questions?select=id&id=eq.${created.question.id}`, svc)
+  check(
+    'a buyer cannot delete a question, only retire it, so the answers to it survive',
+    !ownerDeletesQuestion.ok && questionAfter.ok && questionAfter.json?.length === 1,
+    `delete: ${describe(ownerDeletesQuestion)} / after: ${describe(questionAfter)}`
   )
 
   const ownerEscalates = await rest(`accounts?owner_id=eq.${owner.id}`, {

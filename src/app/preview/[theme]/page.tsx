@@ -32,6 +32,7 @@ import {
   PREVIEW_DEFINITION,
   PREVIEW_EVENT,
   PREVIEW_FIXTURES,
+  PREVIEW_QUESTIONS,
   PREVIEW_THEMES,
 } from '@/lib/preview/fixture'
 import { EMPTY_THEME_OVERRIDE, resolveEventPage } from '@/lib/template'
@@ -105,6 +106,7 @@ export default async function BlockPreviewPage({
           nowMs: serverNow(),
           rsvp: {
             phase: single(query.rsvp) === 'closed' ? 'closed' : 'open',
+            questions: PREVIEW_QUESTIONS,
             submit: previewRsvpSubmit,
           },
         }}

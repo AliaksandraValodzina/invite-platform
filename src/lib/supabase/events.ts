@@ -2,6 +2,12 @@ import 'server-only'
 
 import { z } from 'zod'
 
+import {
+  isRsvpPiiClass,
+  isRsvpQuestionType,
+  type RsvpQuestion,
+  type RsvpQuestionOption,
+} from '@/lib/rsvp/questions'
 import { eventCacheTag, GUEST_PAGE_REVALIDATE_SECONDS } from '@/lib/serving/cache'
 import type { StoredEventDocuments } from '@/lib/template'
 
@@ -21,6 +27,13 @@ import { serviceGet } from './service'
  * so the state and the row are read at one clock and cached with one lifetime.
  * Asking for the state separately would give the page two caches with two
  * expiries and let a page outlive the state it was rendered from.
+ *
+ * The event's live RSVP questions come back on the same request, as an
+ * embedded resource. Same argument as `serving_state`: a second request would
+ * be a second clock and a second cache lifetime, and the form a guest fills in
+ * has to be the form the write path is about to validate against. Retired
+ * questions are filtered out by the query rather than after it, so a retired
+ * question never reaches a page at all.
  *
  * `events.template_definition_version` is deliberately not read. The column
  * pins the definition version an event was activated against, but `templates`
@@ -51,6 +64,24 @@ export type GuestEvent = {
   readonly timeZone: string
 }
 
+/**
+ * The option list as PostgREST hands it back: `unknown` until it is checked,
+ * because it is jsonb and the database only guarantees its shape through a
+ * trigger. Anything that does not parse is dropped rather than rendered, which
+ * for a choice question means the option is not offered.
+ */
+const optionSchema = z.object({ value: z.string(), label: z.string() })
+
+const questionRowSchema = z.object({
+  id: z.string(),
+  type: z.string(),
+  prompt: z.string(),
+  position: z.number(),
+  required: z.boolean(),
+  options: z.array(optionSchema).nullable(),
+  pii_class: z.string(),
+})
+
 export type GuestPageOutcome =
   /** No row, or a slug that could not be one. Renders the designed 404. */
   | { readonly kind: 'not-found' }
@@ -67,6 +98,8 @@ export type GuestPageOutcome =
       readonly documents: StoredEventDocuments
       /** Published revision number, which the share card uses as a cache key. */
       readonly revision: number
+      /** Live questions, in the order the form asks them. */
+      readonly questions: readonly RsvpQuestion[]
     }
 
 /**
@@ -86,6 +119,7 @@ const rowSchema = z.object({
   event_content: z.array(
     z.object({ revision: z.number(), content: z.unknown(), theme: z.unknown() })
   ),
+  rsvp_questions: z.array(z.unknown()),
 })
 
 const SELECT = [
@@ -98,6 +132,7 @@ const SELECT = [
   'serving_state',
   'templates(definition,theme)',
   'event_content(revision,content,theme)',
+  'rsvp_questions(id,type,prompt,position,required,options,pii_class)',
 ].join(',')
 
 export function guestPageQuery(slug: string): string {
@@ -108,6 +143,11 @@ export function guestPageQuery(slug: string): string {
     // published revision must still come back, so that "published but nothing
     // to serve" is a designed notice rather than a 404 a buyer cannot explain.
     'event_content.is_published': 'is.true',
+    // A retired question is not asked again. Filtering here rather than after
+    // the read means a retired one never reaches a page even if something
+    // downstream forgets.
+    'rsvp_questions.retired_at': 'is.null',
+    'rsvp_questions.order': 'position.asc',
     limit: '1',
   })
   return `events?${params.toString()}`
@@ -159,6 +199,8 @@ export async function loadGuestPage(slug: string): Promise<GuestPageOutcome> {
     timeZone: row.time_zone,
   }
 
+  const questions = readQuestions(row.rsvp_questions)
+
   const published = row.event_content[0]
 
   // An unpublished or expired event serves a notice and none of its content, so
@@ -178,6 +220,7 @@ export async function loadGuestPage(slug: string): Promise<GuestPageOutcome> {
       event,
       state: row.serving_state,
       revision: 0,
+      questions,
       documents: {
         definition: row.templates.definition,
         theme: row.templates.theme,
@@ -192,6 +235,7 @@ export async function loadGuestPage(slug: string): Promise<GuestPageOutcome> {
     event,
     state: row.serving_state,
     revision: published.revision,
+    questions,
     documents: {
       definition: row.templates.definition,
       theme: row.templates.theme,
@@ -199,6 +243,40 @@ export async function loadGuestPage(slug: string): Promise<GuestPageOutcome> {
       themeOverride: published.theme,
     },
   }
+}
+
+/**
+ * Turns embedded question rows into the shape the form and the write path use.
+ *
+ * A row that does not parse is dropped rather than rendered. That is the one
+ * place in this file where dropping is right: an unknown question type is a
+ * deploy that is older than the database, and asking a guest a question this
+ * build cannot store an answer to would collect something and lose it. Dropping
+ * is visible, because the question is missing from the form, and it cannot lose
+ * an answer that was already given.
+ */
+function readQuestions(rows: readonly unknown[]): RsvpQuestion[] {
+  const questions: RsvpQuestion[] = []
+
+  for (const row of rows) {
+    const parsed = questionRowSchema.safeParse(row)
+    if (!parsed.success) continue
+
+    const { type, pii_class: piiClass, options } = parsed.data
+    if (!isRsvpQuestionType(type) || !isRsvpPiiClass(piiClass)) continue
+
+    questions.push({
+      id: parsed.data.id,
+      type,
+      prompt: parsed.data.prompt,
+      position: parsed.data.position,
+      required: parsed.data.required,
+      options: options === null ? null : (options as readonly RsvpQuestionOption[]),
+      piiClass,
+    })
+  }
+
+  return questions.sort((left, right) => left.position - right.position)
 }
 
 function describe(error: unknown): string {

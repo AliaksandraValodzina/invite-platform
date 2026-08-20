@@ -1,29 +1,41 @@
 'use server'
 
+import { headers } from 'next/headers'
+
 import type { RsvpSubmitResult } from '@/components/blocks'
+import { handleRsvpSubmission } from '@/lib/rsvp/handle'
+import { fieldsFromFormData } from '@/lib/rsvp/submission'
 
 /**
- * Where a reply will go, and where it does not go yet.
+ * Where a reply goes.
  *
- * The RSVP block takes `submit` as a required prop so that a form with nowhere
- * to send a reply cannot be rendered by accident. This is that prop for the
- * guest page, and it refuses, loudly, because stage 1 builds the read path and
- * stage 2 builds the reply path.
+ * Stage 1 left a refusal here on purpose, so that a form with nowhere to send a
+ * reply could not quietly say "thank you" and store nothing. This is the same
+ * seam with the refusal replaced: it reads the form, and everything else
+ * happens in `handleRsvpSubmission`, which `POST /api/e/[slug]/rsvp` also
+ * calls. Neither door does anything the other does not.
  *
- * It returns a failure rather than `{ ok: true }`. A form that says "thank you"
- * and stores nothing is the worst version of this: the guest believes they have
- * replied, the buyer sees no reply, and nothing anywhere is red. A refusal is
- * visible the first time anyone tries it, which is the point. The preview
- * route's stand in returns success on purpose, because it writes to nothing and
- * says so; a real event page is a different promise.
+ * It takes the slug as its first argument and the page binds it, so the slug a
+ * reply is stored against is the slug the page was rendered for and not a value
+ * that travelled through a form a guest can edit.
  *
- * When stage 2 lands, this calls the RSVP API route with the service role, and
- * nothing else about the block or the page moves.
+ * The headers go no further than the rate limit, which hashes the address and
+ * holds it in memory for ten minutes. `20260819010600_rsvps.sql` is explicit
+ * that no address, user agent or fingerprint is written down anywhere, and this
+ * path keeps that true.
  */
-export async function submitRsvp(_formData: FormData): Promise<RsvpSubmitResult> {
+export async function submitRsvp(slug: string, formData: FormData): Promise<RsvpSubmitResult> {
+  const outcome = await handleRsvpSubmission({
+    slug,
+    fields: fieldsFromFormData(formData),
+    headers: await headers(),
+  })
+
+  if (outcome.ok) return { ok: true }
+
   return {
     ok: false,
-    message:
-      'This invitation is not collecting replies yet. Nothing was sent. Please reply to whoever shared the link with you.',
+    message: outcome.message,
+    ...(outcome.issues === undefined ? {} : { issues: outcome.issues }),
   }
 }

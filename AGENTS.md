@@ -19,7 +19,7 @@ Stack: **Next.js App Router + TypeScript (strict) + Tailwind + Supabase (Postgre
 Exit criteria, in the captain's words: *seed a template JSON by hand, create an event row, visit its slug on a phone, see a fast beautiful page with a live countdown, submit an RSVP, and see it in the database — with tests covering that loop.*
 
 **Not in Phase 0:** any editor, payments, auth UI beyond basic login, seller accounts, marketplace, freemium, custom domains, photo sharing.
-**Not in v1 either:** direct payments (Etsy is the checkout), custom RSVP question builder (hardcode attending / guest count / dietary / message).
+**Not in v1 either:** direct payments (Etsy is the checkout), a buyer-facing RSVP question builder. The question *storage* is extensible from stage 2 and the shipped set is hardcoded (`src/lib/rsvp/questions.ts`); the authoring surface is not built.
 
 **The editor is the tarpit.** Guided form, not drag-and-drop. Buyers of $18–$49 products expect "fill in and done", not Canva. If a task starts growing an editor, stop and say so.
 
@@ -31,7 +31,7 @@ expiry and RSVP retention, is in `docs/data-model.md`.
 
 - **Every table carries `owner_id` and has RLS from the first migration**, even though v1 is single-tenant. Retrofitting tenancy is the most painful migration in this kind of product.
 - **Schema lives in migrations in this repo, managed by the Supabase CLI. Never edit schema in the dashboard.** A dashboard edit is a change nobody can review and no environment can reproduce.
-- **Guest pages and RSVP inserts are served through API routes with the service role.** Never direct anonymous table access. The client is `src/lib/supabase/service.ts`: `server-only`, strict about its own env, and the only reader of the service role key. `scripts/check-anon-access.mjs` proves the anonymous lockout over HTTP and CI runs it.
+- **Guest pages and reply writes go through the service role. A buyer's dashboard goes through their own token.** Never direct anonymous table access. The service client is `src/lib/supabase/service.ts`: `server-only`, strict about its own env, and the only reader of the service role key. The dashboard uses `src/lib/supabase/buyer.ts` so the check is RLS in the database rather than a `where` clause somebody can forget. `scripts/check-anon-access.mjs` proves both boundaries over HTTP and CI runs it.
 - **The template definition is a versioned JSON file format** — a block list, a per-block config validated by Zod, and theme tokens. **The `version` field exists from day one** so evolving a block does not break events already live. This is the product's file format and the most important decision in Phase 0. It lives in `src/lib/template/`, seeds are in `templates/`, and `docs/template-format.md` explains how it changes over time. **Content is keyed by block `id`, schemas are selected by block `type`.** Keeping those apart is what makes a rename survivable.
 - **Theme tokens are separate from content.** That separation is what later lets a buyer pick a palette and lets us restyle without touching structure.
 - **The template line is three themes, not one: Deckle & Deboss, Masthead, Foil & Midnight.** Their separateness is the product, so do not harmonise, rename or add a fourth. Every value in `templates/themes/` for those three is quoted from `data/ip-design-directions/report.md` and is not to be adjusted by eye. `docs/design-directions.md` is the map from that report to this format, including what it needed that the format did not have.
@@ -50,7 +50,8 @@ expiry and RSVP retention, is in `docs/data-model.md`.
 - **The guest page's cache lifetime is a privacy control before it is a speed one.** It bounds how long a guest can be shown "live, RSVPs open" for an event whose hosting has lapsed, which is new guest PII collected against a lapsed account. The numbers and the reasoning are in `src/lib/serving/cache.ts`, the header is set in `src/proxy.ts`, and `tests/e2e/caching.spec.ts` reads it off a real response and refuses to run against the dev server. A header is a property of a deployment, so it is re-checked by hand on every new host.
 - **Countdowns are timezone-correct.** Event date after hosting expiry, and timezone boundaries, are known edge cases.
 - **This repo is public. Never commit a secret.** No Supabase service-role key, no Resend or Postmark key, no activation-code secret, no database URL with a password. They live in GitHub and Vercel environment secrets, and only `NEXT_PUBLIC_` values ever belong in the repo.
-- **RSVP data is guests' PII** — names, emails, dietary and health notes. That means a privacy policy, Australian Privacy Act awareness, GDPR if EU guests RSVP, and retention/deletion rules when events expire. Do not add a field to the RSVP form without saying what happens to it at expiry.
+- **RSVP data is guests' PII** — names, emails, dietary and health notes. The statement that says so ships at `/privacy` and `/terms`, and `tests/unit/legal/retention.test.ts` holds the days it prints to the days the sweep uses. Australian Privacy Act, GDPR if EU guests reply.
+- **A reply is an envelope plus answers, and `pii_class` is what makes the retention promise enforceable.** A question is a row and never template config, so no stored document can introduce personal information nobody classified; the sweep reads that column and never a prompt. An answer snapshots its question and is immutable, and a question can only be retired, never deleted. The schema enforces all of it. `docs/replies.md`.
 
 ## Testing
 

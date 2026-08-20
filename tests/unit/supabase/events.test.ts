@@ -33,6 +33,29 @@ const ROW = {
   event_content: [
     { revision: 3, content: { version: 1, blocks: {} }, theme: { version: 1, tokens: {} } },
   ],
+  rsvp_questions: [
+    {
+      id: 'q-name',
+      type: 'short_answer',
+      prompt: 'Your name',
+      position: 1,
+      required: true,
+      options: null,
+      pii_class: 'identity',
+    },
+    {
+      id: 'q-course',
+      type: 'multiple_choice',
+      prompt: 'Which will you have?',
+      position: 2,
+      required: false,
+      options: [
+        { value: 'fish', label: 'Fish' },
+        { value: 'beef', label: 'Beef' },
+      ],
+      pii_class: 'none',
+    },
+  ],
 }
 
 function stubEnvironment(): void {
@@ -156,6 +179,89 @@ describe('loadGuestPage', () => {
       content: ROW.event_content[0]!.content,
       themeOverride: ROW.event_content[0]!.theme,
     })
+  })
+
+  it('reads the questions the form has to draw, on the same request as the event', async () => {
+    stubEnvironment()
+    const fetchStub = stubFetch({ body: [ROW] })
+
+    const outcome = await loadGuestPage('emma-jake-11ea91')
+
+    expect(outcome.kind).toBe('found')
+    if (outcome.kind !== 'found') return
+
+    // One request. A second read would be a second clock and a second cache
+    // lifetime, and the form a guest fills in has to be the form the write path
+    // is about to validate against.
+    expect(fetchStub).toHaveBeenCalledTimes(1)
+
+    expect(outcome.questions).toEqual([
+      {
+        id: 'q-name',
+        type: 'short_answer',
+        prompt: 'Your name',
+        position: 1,
+        required: true,
+        options: null,
+        piiClass: 'identity',
+      },
+      {
+        id: 'q-course',
+        type: 'multiple_choice',
+        prompt: 'Which will you have?',
+        position: 2,
+        required: false,
+        options: [
+          { value: 'fish', label: 'Fish' },
+          { value: 'beef', label: 'Beef' },
+        ],
+        piiClass: 'none',
+      },
+    ])
+  })
+
+  it('asks the database for live questions in position order, and no retired one', () => {
+    const query = guestPageQuery('emma-jake-11ea91')
+
+    // Filtered in the query rather than after it, so a retired question never
+    // reaches a page even if something downstream forgets.
+    expect(query).toContain('rsvp_questions.retired_at=is.null')
+    expect(query).toContain('rsvp_questions.order=position.asc')
+  })
+
+  /**
+   * A question type the database knows and this deploy does not is a deploy
+   * older than its database. Drawing a control for it would collect an answer
+   * this build cannot store, so the question is left off the form instead,
+   * which is visible and cannot lose an answer already given.
+   */
+  it('leaves off a question this deploy cannot draw, rather than drawing it wrong', async () => {
+    stubEnvironment()
+    stubFetch({
+      body: [
+        {
+          ...ROW,
+          rsvp_questions: [
+            ...ROW.rsvp_questions,
+            {
+              id: 'q-future',
+              type: 'rating',
+              prompt: 'How excited are you?',
+              position: 3,
+              required: false,
+              options: null,
+              pii_class: 'none',
+            },
+          ],
+        },
+      ],
+    })
+
+    const outcome = await loadGuestPage('emma-jake-11ea91')
+
+    expect(outcome.kind).toBe('found')
+    if (outcome.kind !== 'found') return
+    expect(outcome.questions.map((question) => question.id)).toEqual(['q-name', 'q-course'])
   })
 
   it('refuses to serve a published event that has no published content revision', async () => {

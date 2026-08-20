@@ -134,11 +134,29 @@ values (
   '2027-01-15 15:00', 'Australia/Melbourne', now() + interval '365 days', now()
 );
 
-insert into public.rsvps (owner_id, event_id, attendance, party_size, guest_name, dietary_notes)
+insert into public.rsvp_questions (id, owner_id, event_id, type, prompt, position, required, pii_class)
+values (
+  '66666666-6666-6666-6666-666666666666',
+  '11111111-1111-1111-1111-111111111111',
+  '44444444-4444-4444-4444-444444444444',
+  'short_answer', 'Your name', 1, true, 'identity'
+);
+
+insert into public.rsvps (id, owner_id, event_id, attendance, party_size)
+values (
+  '55555555-5555-5555-5555-555555555555',
+  '11111111-1111-1111-1111-111111111111',
+  '44444444-4444-4444-4444-444444444444',
+  'attending', 2
+);
+
+insert into public.rsvp_answers (owner_id, event_id, rsvp_id, question_id, question_prompt, question_type, pii_class, value_text)
 values (
   '11111111-1111-1111-1111-111111111111',
   '44444444-4444-4444-4444-444444444444',
-  'attending', 2, 'Priya Raman', 'coeliac'
+  '55555555-5555-5555-5555-555555555555',
+  '66666666-6666-6666-6666-666666666666',
+  'Your name', 'short_answer', 'identity', 'Priya Raman'
 );
 
 
@@ -169,11 +187,18 @@ select throws_ok(
 );
 
 select throws_ok(
-  $$insert into public.rsvps (owner_id, event_id, attendance, party_size, guest_name)
-    values ('11111111-1111-1111-1111-111111111111', '44444444-4444-4444-4444-444444444444', 'attending', 1, 'Anon Guest')$$,
+  $$insert into public.rsvps (owner_id, event_id, attendance, party_size)
+    values ('11111111-1111-1111-1111-111111111111', '44444444-4444-4444-4444-444444444444', 'attending', 1)$$,
   '42501',
   null,
   'anon cannot write to rsvps'
+);
+
+select throws_ok(
+  'select * from public.rsvp_answers',
+  '42501',
+  null,
+  'anon cannot read what a guest wrote'
 );
 
 reset role;
@@ -191,14 +216,14 @@ select is(
 );
 
 select is(
-  (select guest_name from public.rsvps limit 1),
+  (select value_text from public.rsvp_answers limit 1),
   'Priya Raman',
-  'the owner reads the guest name on their own RSVP'
+  'the owner reads what a guest wrote on their own event'
 );
 
 select throws_ok(
-  $$insert into public.rsvps (owner_id, event_id, attendance, party_size, guest_name)
-    values ('11111111-1111-1111-1111-111111111111', '44444444-4444-4444-4444-444444444444', 'attending', 1, 'Self Served')$$,
+  $$insert into public.rsvps (owner_id, event_id, attendance, party_size)
+    values ('11111111-1111-1111-1111-111111111111', '44444444-4444-4444-4444-444444444444', 'attending', 1)$$,
   '42501',
   null,
   'even the owner cannot insert an RSVP directly: that path is the service role'
@@ -224,6 +249,12 @@ select is(
   (select count(*)::integer from public.rsvps),
   0,
   'a signed-in stranger sees no RSVPs belonging to someone else'
+);
+
+select is(
+  (select count(*)::integer from public.rsvp_answers),
+  0,
+  'and none of the answers on them'
 );
 
 select is(

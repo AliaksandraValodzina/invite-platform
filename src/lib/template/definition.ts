@@ -23,7 +23,7 @@ import { createDocumentPipeline, type DocumentMigration } from './document'
 import { slugSchema } from './primitives'
 
 /** Bumped when the shape of a block config, or the block list itself, changes. */
-export const CURRENT_DEFINITION_VERSION = 2
+export const CURRENT_DEFINITION_VERSION = 3
 
 /**
  * The ladder. The runner asserts this list has exactly
@@ -49,7 +49,69 @@ export const DEFINITION_MIGRATIONS: readonly DocumentMigration[] = [
      */
     migrate: (document) => ({ ...document, version: 2 }),
   },
+  {
+    from: 2,
+    to: 3,
+    description: 'rsvp-form stops declaring questions, because questions are rows now',
+    /*
+     * The reply path moved to `rsvp_questions` and `rsvp_answers`
+     * (20260821010000). What a guest is asked is a row carrying a `pii_class`,
+     * so the document no longer carries `fields`, and the one part of it that
+     * was never a question keeps its meaning: party size is an envelope column
+     * on `rsvps`, so `guestCount` moves up a level rather than going away.
+     *
+     * This is a REWRITE and not just a number, because `fields` is required in
+     * version 2 and the version 3 schema is strict: a stored document that kept
+     * it would stop validating, and a block whose config does not validate is a
+     * block the resolver omits. The rule in docs/template-format.md is that a
+     * removal costs a migration that reproduces the old rendering, and the old
+     * rendering of `fields.email`, `fields.dietary` and `fields.message` is now
+     * produced by the default question set in src/lib/rsvp/questions.ts.
+     */
+    migrate: (document) => ({
+      ...document,
+      version: 3,
+      blocks: asBlockList(document.blocks).map((block) => {
+        if (block.type !== 'rsvp-form') return block
+
+        const config = isRecord(block.config) ? block.config : {}
+        const { fields, ...rest } = config
+        const guestCount = isRecord(fields) ? fields.guestCount : undefined
+
+        return {
+          ...block,
+          config: {
+            ...rest,
+            // A version 2 document always had one, because the schema required
+            // it. The fallback is what the block set has always offered when a
+            // buyer left the ceiling alone, so a document that lost its way
+            // still renders a usable form.
+            guestCount: guestCount ?? { enabled: true, max: 6 },
+          },
+        }
+      }),
+    }),
+  },
 ]
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * The block list as a migration sees it: whatever was stored, treated as a list
+ * of objects and nothing more.
+ *
+ * A migration runs BEFORE validation, on a document that has not been checked
+ * yet, so it cannot assume the shape it is about to produce. Anything that is
+ * not a list of objects is passed through untouched and fails validation
+ * afterwards with a message about what is actually wrong, which is a better
+ * error than one thrown from inside a migration.
+ */
+function asBlockList(value: unknown): { type?: unknown; config?: unknown }[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord)
+}
 
 export type BlockConfigSchemas = Record<string, z.ZodType>
 

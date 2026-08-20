@@ -6,6 +6,7 @@ import { GuestNotice } from '@/components/guest-notice'
 import { ThemeScope } from '@/components/theme-scope'
 import { readSiteConfig } from '@/lib/env'
 import { resolveEventSchedule, type ResolvedSchedule } from '@/lib/event/time'
+import type { RsvpQuestion } from '@/lib/rsvp/questions'
 import { buildEventShareMetadata, ogCardFields, ogCardVersion } from '@/lib/og'
 import { loadGuestPage } from '@/lib/supabase/events'
 import { resolveEventPage, type ResolvedPage, type TemplateBlock } from '@/lib/template'
@@ -135,13 +136,15 @@ export default async function GuestPage({ params }: PageProps) {
   })
   if (schedule === null) return <GuestNotice kind="unavailable" />
 
-  return renderPage(page.page, schedule, outcome.state)
+  return renderPage(page.page, schedule, outcome.state, outcome.questions, outcome.event.slug)
 }
 
 function renderPage(
   page: ResolvedPage<TemplateBlock>,
   schedule: ResolvedSchedule,
-  state: 'live' | 'grace'
+  state: 'live' | 'grace',
+  questions: readonly RsvpQuestion[],
+  slug: string
 ) {
   return (
     /*
@@ -161,7 +164,15 @@ function renderPage(
             // lapsed hosting is the thing grace exists to avoid, not a side
             // effect of it.
             phase: state === 'live' ? 'open' : 'closed',
-            submit: submitRsvp,
+            questions,
+            /*
+             * Bound here, so the slug a reply is stored against is the slug
+             * this page was rendered for. A slug travelling through the form
+             * would be a slug a guest could edit, and the write path would be
+             * taking the identity of the event from the request rather than
+             * from the page.
+             */
+            submit: submitRsvp.bind(null, slug),
           },
         }}
       />

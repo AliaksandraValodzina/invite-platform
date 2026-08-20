@@ -205,6 +205,10 @@ jobs:
           {
             echo "SUPABASE_URL=$(echo "$status" | jq -r .API_URL)"
             echo "SUPABASE_SERVICE_ROLE_KEY=$(echo "$status" | jq -r .SERVICE_ROLE_KEY)"
+            # The publishable key. The suite signs a buyer in and reads their
+            # dashboard as them, which is the path row level security actually
+            # guards, so the sign-in half needs the key a browser would carry.
+            echo "SUPABASE_ANON_KEY=$(echo "$status" | jq -r .ANON_KEY)"
           } >> "$GITHUB_ENV"
 
       - name: Run Playwright smoke tests
@@ -279,6 +283,20 @@ jobs:
       # a denial rather than an empty database.
       - name: Prove an anonymous client is still denied
         run: node scripts/check-anon-access.mjs
+
+      # Runs last, and it has to. It adds an enum value, which cannot be rolled
+      # back, so it leaves a sixth RSVP question type behind on whatever
+      # database it ran against. That is free here, because the stack is thrown
+      # away with the runner, and it is why the script refuses to run against
+      # anything but a local database.
+      #
+      # What it buys: the claim that a sixth question type is an addition rather
+      # than a migration is the load bearing one in the reply model, and this
+      # performs it against a database already holding answers and then reads
+      # the catalogue to show that no table and no row was rewritten. It costs
+      # about a second on top of a job that has already started the containers.
+      - name: Prove a sixth RSVP question type needs no migration
+        run: node scripts/prove-question-type-addition.mjs
 
       - name: Report job duration
         id: duration
