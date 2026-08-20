@@ -26,6 +26,12 @@ retention half that Postgres cannot do. It runs with no cloud credential: with
 no R2 configured, bytes go to `.uploads/` and are served by the app at
 `/a/<key>` with the same headers.
 
+A guest's first sight is a closed envelope, drawn from the template's own theme
+tokens and opened by a tap, or from a picture the buyer uploaded under the
+`envelope` upload kind. The invitation is rendered whole underneath it and
+stays reachable if the envelope never opens, with no JavaScript, motion reduced,
+or nothing painting at all. `docs/envelope.md` is the design and the reasons.
+
 The template format is the product's file format: three versioned JSON documents,
 five block types, and theme tokens kept out of content. It lives in
 `src/lib/template/`, its seed files are in `templates/`, and

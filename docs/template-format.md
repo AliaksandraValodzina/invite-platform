@@ -10,22 +10,26 @@ renders anything: that is the next task.
 
 ## Three documents, not one
 
-| Document   | Column                                   | Holds                                     |
-| ---------- | ---------------------------------------- | ----------------------------------------- |
-| definition | `templates.definition`                   | which blocks, in what order, default copy |
-| theme      | `templates.theme`, `event_content.theme` | tokens, and only tokens                   |
-| content    | `event_content.content`                  | the buyer's overrides, keyed by block id  |
+| Document   | Column                                   | Holds                                                       |
+| ---------- | ---------------------------------------- | ----------------------------------------------------------- |
+| definition | `templates.definition`                   | which blocks, in what order, default copy, and the envelope |
+| theme      | `templates.theme`, `event_content.theme` | tokens, and only tokens                                     |
+| content    | `event_content.content`                  | the buyer's overrides, keyed by block id, and the envelope  |
 
 ```jsonc
-// definition, at version 3 since rsvp-form stopped declaring questions
-{ "version": 3, "blocks": [{ "id": "hero", "type": "hero", "config": { ... } }] }
+// definition, at version 4 since it gained the envelope
+{ "version": 4, "envelope": { ... }, "blocks": [{ "id": "hero", "type": "hero", "config": { ... } }] }
 
 // theme, at version 2 since the type scale gained a font per role
 { "version": 2, "tokens": { "color": {...}, "font": {...}, "typeScale": {...}, "space": {...}, "radius": {...} } }
 
-// content
-{ "version": 1, "blocks": { "hero": { "headline": "Priya & Alex" } } }
+// content, at version 2 for the same reason the definition is at 4
+{ "version": 2, "blocks": { "hero": { "headline": "Priya & Alex" } }, "envelope": { ... } }
 ```
+
+`envelope` is beside `blocks` in both documents and not inside either, because
+the cover is drawn over the page rather than being a section of it, and it has
+no block id to be keyed by. `docs/envelope.md` has the whole of it.
 
 Each carries its own `version` and each versions independently. Adding a colour
 role is not the same change as adding a block, and forcing them to share a
@@ -155,6 +159,18 @@ The stepped arch aperture the design directions report specifies is a `frame`
 value that has not been built; by the rules below it arrives as a new optional
 field, which is a version bump with no rewrite.
 
+### The envelope is not a block
+
+The cover a guest opens is `definition.envelope`, a sibling of the block list,
+and a buyer's changes to it are `content.envelope`, merged by the same top level
+key replace with the same `null` clearing. Every field is optional, so a
+definition written before the envelope existed and a buyer who cleared every
+field resolve to the same thing: the universal envelope, drawn from theme tokens.
+
+It carries no headline. The cover shows the invitation's own, read off the
+resolved hero. It carries an `image`, which is where a buyer's uploaded envelope
+picture goes and which nothing writes yet. See `docs/envelope.md`.
+
 ### `rsvp-form` carries no questions
 
 The rsvp-form config carries the words on the form and one envelope control,
@@ -264,6 +280,7 @@ fallback would be a lie.**
 | theme                | fail    | blocks consume tokens and nothing else                                                                                        |
 | content document     | fail    | template defaults are placeholder copy, and showing another couple's names to real guests is worse than a designed error page |
 | theme override       | degrade | a palette is not somebody's words; a correct page in the template palette still serves                                        |
+| envelope override    | degrade | the cover is not the invitation, and an invitation under the template's envelope still serves                                 |
 | one block's override | omit it | the only block that can ever be omitted is one whose buyer content we cannot trust                                            |
 | every block omitted  | fail    | an empty page is not a page                                                                                                   |
 

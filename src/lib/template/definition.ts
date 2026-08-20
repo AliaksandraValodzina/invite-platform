@@ -4,7 +4,10 @@
  *
  * Stored in `templates.definition`, mirrored by `templates.definition_version`.
  * Shape is `{ version, blocks: [...] }`, which is exactly what the check
- * constraints on that table already assert.
+ * constraints on that table already assert, plus an optional `envelope`: the
+ * cover a guest opens, which sits beside the block list rather than inside it
+ * because it is drawn over the page instead of being a section of it. See
+ * `./envelope.ts`.
  *
  * Two identifiers, doing two different jobs, and keeping them separate is what
  * makes a rename survivable:
@@ -20,10 +23,11 @@ import { z } from 'zod'
 
 import { BLOCK_CONFIG_SCHEMAS, type BlockType } from './blocks'
 import { createDocumentPipeline, type DocumentMigration } from './document'
+import { envelopeConfigSchema, type EnvelopeConfig } from './envelope'
 import { slugSchema } from './primitives'
 
 /** Bumped when the shape of a block config, or the block list itself, changes. */
-export const CURRENT_DEFINITION_VERSION = 3
+export const CURRENT_DEFINITION_VERSION = 4
 
 /**
  * The ladder. The runner asserts this list has exactly
@@ -92,6 +96,23 @@ export const DEFINITION_MIGRATIONS: readonly DocumentMigration[] = [
       }),
     }),
   },
+  {
+    from: 3,
+    to: 4,
+    description: 'the definition gains an optional envelope, the cover a guest opens',
+    /*
+     * Nothing to rewrite. `envelope` is optional and every field inside it is
+     * optional, so a version 3 document satisfies the version 4 schema exactly
+     * as it was stored. What it renders is not nothing, though: a document with
+     * no envelope key resolves to the universal envelope, which is the point of
+     * the feature rather than a gap in it. See src/lib/template/envelope.ts.
+     *
+     * The number still moves, for the reason the 1 to 2 bump moved it:
+     * `templates.definition_version` is what answers "which documents predate
+     * the envelope" with a query rather than with a guess.
+     */
+    migrate: (document) => ({ ...document, version: 4 }),
+  },
 ]
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -127,9 +148,15 @@ export type BlockOf<M extends BlockConfigSchemas> = {
 export type DefinitionOf<M extends BlockConfigSchemas> = {
   version: number
   blocks: BlockOf<M>[]
+  /**
+   * The cover, which is beside the block list rather than in it because it is
+   * drawn over the page instead of being a part of it. Absent means the
+   * universal envelope, not no envelope.
+   */
+  envelope?: EnvelopeConfig
 }
 
-const blockEnvelopeSchema = z.strictObject({
+const blockShellSchema = z.strictObject({
   id: slugSchema,
   type: z.string(),
   config: z.unknown(),
@@ -142,12 +169,18 @@ const definitionShellSchema = z.strictObject({
    * template. The ceiling is a guardrail against a document that would take a
    * phone on bad wifi a long time to render.
    */
-  blocks: z.array(blockEnvelopeSchema).min(1).max(24),
+  blocks: z.array(blockShellSchema).min(1).max(24),
+  /**
+   * Validated here rather than in the two pass transform below, because unlike
+   * a block config there is no `type` to select a schema by: there is one
+   * envelope and one schema for it, so a plain optional key says exactly that.
+   */
+  envelope: envelopeConfigSchema.optional(),
 })
 
 /**
- * Validation runs in two passes on purpose: the envelope first, then the config
- * against the schema its `type` selects. A single discriminated union would say
+ * Validation runs in two passes on purpose: the block shell first, then the
+ * config against the schema its `type` selects. A single discriminated union would say
  * "no branch matched" when a hero headline is too long. This says
  * `blocks.0.config.headline: too big`, which is the difference between a usable
  * error in a guided form and a shrug.
@@ -204,7 +237,17 @@ export function createTemplateDefinitionSchema<M extends BlockConfigSchemas>(
       blocks.push({ id: block.id, type: block.type, config: parsed.data })
     })
 
-    return { version: document.version, blocks } as DefinitionOf<M>
+    /*
+     * `envelope` is spread rather than always written, because no schema in
+     * this format uses `.default()`: parsing must never add a key that was not
+     * stored. An absent envelope stays absent, and the renderer is what turns
+     * that into the universal one.
+     */
+    return {
+      version: document.version,
+      blocks,
+      ...(document.envelope === undefined ? {} : { envelope: document.envelope }),
+    } as DefinitionOf<M>
   })
 }
 

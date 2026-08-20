@@ -16,6 +16,9 @@
  *   theme override invalid degrade. Fall back to the template theme and report
  *                          it. A palette is not somebody's words, and a
  *                          correct page in the wrong palette still serves.
+ *   envelope override      degrade. Fall back to the template's envelope and
+ *     invalid              report it. Same reason: the cover is not the
+ *                          invitation, and the invitation still serves.
  *   one block's override   omit that block, render the rest, report it. The
  *     invalid              only block that can ever be omitted is one whose
  *                          buyer content we cannot trust, and the template
@@ -28,6 +31,7 @@
 
 import { BLOCK_CONFIG_SCHEMAS } from './blocks'
 import { eventContentPipeline, type EventContent } from './content'
+import { envelopeConfigSchema, UNIVERSAL_ENVELOPE, type EnvelopeConfig } from './envelope'
 import {
   isJsonObject,
   toIssues,
@@ -79,6 +83,13 @@ export type OrphanedContent = {
 
 export type ResolvedPage<Block> = {
   readonly blocks: readonly Block[]
+  /**
+   * The cover, always present and never null. An empty object is the universal
+   * envelope rather than the absence of one, which is why this is not
+   * `EnvelopeConfig | null`: a guest page always has a cover, and what a
+   * template or a buyer supplies only changes what is drawn on it.
+   */
+  readonly envelope: EnvelopeConfig
   readonly tokens: ThemeTokens
   readonly cssVariables: Readonly<Record<string, string>>
   readonly definitionVersion: number
@@ -93,6 +104,16 @@ export type ResolvedPage<Block> = {
   readonly orphanedContent: readonly OrphanedContent[]
   /** Set when the buyer's theme override was rejected and the template theme was used. */
   readonly themeOverrideRejected: {
+    readonly issues: readonly DocumentIssue[]
+    readonly stored: unknown
+  } | null
+  /**
+   * Set when the buyer's envelope override was rejected and the template's own
+   * envelope was drawn instead. Degrade rather than fail, for the same reason a
+   * theme override degrades: a cover is not somebody's words, and an invitation
+   * that serves under a plainer envelope is a working invitation.
+   */
+  readonly envelopeOverrideRejected: {
     readonly issues: readonly DocumentIssue[]
     readonly stored: unknown
   } | null
@@ -116,6 +137,12 @@ type DefinitionShape = {
     readonly type: string
     readonly config: unknown
   }[]
+  /**
+   * Typed as unknown so a test can hand this resolver a genuinely different
+   * version of the format without having to carry this format's envelope type
+   * with it. It is validated here either way.
+   */
+  readonly envelope?: unknown
 }
 
 /**
@@ -224,6 +251,8 @@ export function resolveEventPage<D extends DefinitionShape = TemplateDefinition>
     }
   }
 
+  const envelope = resolveEnvelope(definition.document.envelope, content.document.envelope)
+
   const orphanedContent: OrphanedContent[] = Object.entries(content.document.blocks)
     .filter(([id]) => !usedContentIds.has(id))
     .map(([id, storedOverride]) => ({ id, storedOverride }))
@@ -232,6 +261,7 @@ export function resolveEventPage<D extends DefinitionShape = TemplateDefinition>
     ok: true,
     page: {
       blocks,
+      envelope: envelope.config,
       tokens,
       cssVariables: themeToCssVariables(tokens),
       definitionVersion: dependencies.definition.version,
@@ -246,8 +276,50 @@ export function resolveEventPage<D extends DefinitionShape = TemplateDefinition>
       themeOverrideRejected: themeOverride.ok
         ? null
         : { issues: themeOverride.issues, stored: themeOverride.stored },
+      envelopeOverrideRejected: envelope.rejected,
     },
   }
+}
+
+/**
+ * The cover the page will draw: the template's envelope with the buyer's
+ * override merged over it, or the universal one when neither says anything.
+ *
+ * There are three ways to arrive at the universal envelope and they are the
+ * same code path, which is what stops it being a special case somebody forgets
+ * to test: a definition with no `envelope` key, a definition whose envelope has
+ * no fields set, and a buyer who cleared every field out of the guided form.
+ *
+ * A rejected override degrades to the template's envelope instead of failing
+ * the page. That is the theme override rule, applied for the theme override
+ * reason: it is not the buyer's words about their wedding, and an invitation
+ * that still serves is worth more than a designed error page.
+ */
+function resolveEnvelope(
+  stored: unknown,
+  override: Record<string, unknown> | undefined
+): {
+  readonly config: EnvelopeConfig
+  readonly rejected: { readonly issues: readonly DocumentIssue[]; readonly stored: unknown } | null
+} {
+  const fromTemplate = envelopeConfigSchema.safeParse(stored ?? UNIVERSAL_ENVELOPE)
+
+  /*
+   * Unreachable while the definition validated against this schema, and handled
+   * rather than thrown, because this is a request path.
+   */
+  const base = fromTemplate.success ? fromTemplate.data : UNIVERSAL_ENVELOPE
+
+  if (override === undefined || Object.keys(override).length === 0) {
+    return { config: base, rejected: null }
+  }
+
+  const merged = envelopeConfigSchema.safeParse(applyOverride(base, override))
+  if (!merged.success) {
+    return { config: base, rejected: { issues: toIssues(merged.error), stored: override } }
+  }
+
+  return { config: merged.data, rejected: null }
 }
 
 /**

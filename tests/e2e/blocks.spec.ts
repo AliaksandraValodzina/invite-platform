@@ -106,13 +106,24 @@ test.describe('the guest page blocks', () => {
       if (image === null) return ['no artwork band']
       const band = image.getBoundingClientRect()
 
-      return [...document.querySelectorAll('h1, h2, p, a, span, label, button')]
-        .filter((node) => (node.textContent ?? '').trim().length > 0)
-        .filter((node) => {
-          const box = node.getBoundingClientRect()
-          return box.height > 0 && box.top < band.bottom && box.bottom > band.top
-        })
-        .map((node) => (node.textContent ?? '').trim().slice(0, 40))
+      return (
+        [...document.querySelectorAll('h1, h2, p, a, span, label, button')]
+          .filter((node) => (node.textContent ?? '').trim().length > 0)
+          /*
+           * Painted text only. The envelope cover is a full viewport element that
+           * stays in the layout once it has been opened, at `visibility: hidden`,
+           * so its words still have a box that overlaps everything. Text that is
+           * not painted is not drawn on the band, which is what this test is
+           * about, and hidden text is also out of the accessibility tree and out
+           * of hit testing.
+           */
+          .filter((node) => getComputedStyle(node).visibility !== 'hidden')
+          .filter((node) => {
+            const box = node.getBoundingClientRect()
+            return box.height > 0 && box.top < band.bottom && box.bottom > band.top
+          })
+          .map((node) => (node.textContent ?? '').trim().slice(0, 40))
+      )
     })
     expect(overlapping).toEqual([])
   })

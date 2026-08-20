@@ -33,7 +33,10 @@ export {
   type RsvpFormConfig,
 } from './blocks'
 
+export { UNIVERSAL_ENVELOPE, envelopeConfigSchema, type EnvelopeConfig } from './envelope'
+
 export {
+  CONTENT_MIGRATIONS,
   CURRENT_CONTENT_VERSION,
   EMPTY_EVENT_CONTENT,
   eventContentPipeline,

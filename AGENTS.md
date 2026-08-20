@@ -43,7 +43,14 @@ expiry and RSVP retention, is in `docs/data-model.md`.
   words, or the couple's details appear twice, once as pixels and once as real
   text. Everything in `public/samples/unlicensed-placeholder/` is an unlicensed
   placeholder that must not ship. See `docs/blocks.md`.
-- **A block consumes tokens and nothing else. No hardcoded colour, font, radius or spacing value inside a block, ever.** One block set has to produce many visually distinct templates. If a theme variant looks broken, the fix goes into the **token schema** — never into a block component. Blocks live in `src/components/blocks/`, a unit test fails the PR on a hardcoded value, and `docs/blocks.md` lists the roles they consume.
+- **The envelope a guest opens is drawn over the invitation, never in place of it.** A guest's
+  first sight is a closed envelope; the whole page is already rendered under it
+  and stays reachable if it never opens. It opens with a checkbox and a sibling
+  selector, so no JavaScript, no `:has()`, and nothing `inert` or `aria-hidden`.
+  It is not a block: it is `definition.envelope` beside the block list, drawn
+  from theme tokens, with `content.envelope` for the buyer's changes and the
+  inert seam for their uploaded picture. See `docs/envelope.md`.
+- **A block consumes tokens and nothing else. No hardcoded colour, font, radius or spacing value inside a block, ever.** One block set has to produce many visually distinct templates. If a theme variant looks broken, the fix goes into the **token schema** — never into a block component. Blocks live in `src/components/blocks/`, the envelope in `src/components/envelope/` obeys the same rule, a unit test fails the PR on a hardcoded value in either, and `docs/blocks.md` lists the roles they consume.
 - **Guest pages are mobile-first and tested at 320px.** 90%+ of guests arrive from a chat link on a phone, often an old one on bad wifi.
 - **OG/meta tags are a feature, not polish.** The share-card preview in WhatsApp is how an invitation spreads, and it is the first impression of the product.
 - **404, expired and unpublished states are designed, never default error pages.** Guests hit them at emotional moments and it reflects on the buyer's shop reviews. Which state a request gets is `public.event_state_at` and nothing else: no code compares those timestamps a second time. `docs/serving.md` has the read path, the four states and the notices.

@@ -11,9 +11,16 @@
  * of definition, theme and buyer content that a real page will serve, rather
  * than a hand assembled approximation of it.
  *
- * Query parameters, both of them preview affordances:
+ * Query parameters, all of them preview affordances:
  *   fixture=sample|long-names|report-sample   which content overrides to apply
  *   rsvp=open|closed                          the serving phase of the RSVP block
+ *   envelope=open|closed                      whether the cover starts opened
+ *
+ * The envelope defaults to OPEN here, which is the one place the preview and a
+ * guest page deliberately disagree. This route exists to look at the block set
+ * under a theme, and a cover over all of it would mean every look at a block
+ * started with a tap. `envelope=closed` is how the cover itself is looked at,
+ * and it is what tests/e2e/envelope.spec.ts walks.
  *
  * There is deliberately no parameter for freezing the clock. It would only hold
  * until hydration, after which the countdown reads the browser's clock, so it
@@ -25,6 +32,7 @@ import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 
 import { BlockList } from '@/components/blocks'
+import { EnvelopeCover, envelopeHeadline } from '@/components/envelope'
 import { ThemeScope } from '@/components/theme-scope'
 import { resolveEventSchedule } from '@/lib/event/time'
 import {
@@ -98,7 +106,16 @@ export default async function BlockPreviewPage({
      * specific, and the guest page in Phase 0.5 does the same thing in the same
      * place. See src/app/fonts.ts for why the faces are not preloaded.
      */
-    <ThemeScope tokens={withWebFonts(outcome.page.tokens)}>
+    <ThemeScope
+      tokens={withWebFonts(outcome.page.tokens)}
+      cover={
+        <EnvelopeCover
+          config={outcome.page.envelope}
+          headline={envelopeHeadline(outcome.page.blocks)}
+          startsOpen={single(query.envelope) !== 'closed'}
+        />
+      }
+    >
       <BlockList
         blocks={outcome.page.blocks}
         context={{
