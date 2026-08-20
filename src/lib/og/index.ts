@@ -7,11 +7,9 @@
  * Instagram DM, and in all three it is first seen as a thumbnail about 120px
  * wide. Read contract.ts first; it is where that constraint turns into numbers.
  *
- * `themes.ts` is deliberately not re-exported here. It statically imports the
- * seed theme files, and pulling a JSON import into every consumer of this
- * module is a cost the layout, the contract and the metadata do not need to
- * pay. The route imports it directly, and it goes away entirely once the event
- * read path supplies real tokens.
+ * There is no longer a module of seed themes here. The card is drawn in the
+ * event's own resolved tokens, handed to `planOgCard` by the route, which is
+ * what `themes.ts` said would happen to it once the event read path landed.
  */
 
 export {
@@ -46,8 +44,9 @@ export {
   type OgTextSlot,
 } from './plan'
 
+export { ogCardFields, ogCardVersion, type OgCardFields } from './event'
+
 export {
-  OG_THEME_KEYS,
   buildEventShareMetadata,
   buildOgCardUrl,
   ogCardFooter,
@@ -56,7 +55,6 @@ export {
   type OgCardParams,
   type OgParamIssue,
   type OgParamsOutcome,
-  type OgThemeKey,
   type ShareImage,
   type ShareMetadata,
   type ShareMetadataInput,

@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url'
 
 import { expect, test } from '@playwright/test'
 
+import { seedEvent, type SeededEvent } from '../../scripts/seed-event'
 import { readSiteConfig } from '@/lib/env'
 import {
   OG_CARD_HEIGHT,
@@ -12,8 +13,8 @@ import {
   buildOgCardUrl,
   contrastRatio,
   ogCardFooter,
+  ogCardVersion,
   planOgCard,
-  type OgCardParams,
   type OgCardPlan,
 } from '@/lib/og'
 import { themePipeline, type ThemeTokens } from '@/lib/template'
@@ -35,6 +36,11 @@ import { themePipeline, type ThemeTokens } from '@/lib/template'
  * else would notice. These two tests are the harness that keeps the advance
  * table in src/lib/og/text.ts honest, and the one to rerun when a real display
  * face is registered.
+ *
+ * What moved when the route stopped taking its fields from query parameters:
+ * only where the fields come from. Each case is now a real seeded event, and
+ * the URL carries its slug and a version digest. Every measurement below is
+ * the one it always was.
  */
 
 const THUMBNAIL_HEIGHT = Math.round(OG_CARD_HEIGHT * OG_THUMBNAIL_SCALE)
@@ -44,62 +50,134 @@ const BACKGROUND_TOLERANCE = 6
 
 type CardCase = {
   readonly name: string
-  readonly params: OgCardParams
+  readonly title: string
+  readonly startsAt: string
+  readonly themeKey: string
+  /** Buyer content, keyed by block id, exactly as event_content stores it. */
+  readonly content: unknown
+  /** Left out means the committed classic-invitation definition. */
+  readonly definition?: unknown
+  readonly kicker?: string
+  readonly venue?: string
+}
+
+/**
+ * A definition with a hero and nothing else, so an event can genuinely have no
+ * kicker and no venue. The card's optional slots are read off the resolved
+ * blocks now, and a template that carries a map block always has a venue name,
+ * because the map schema requires one.
+ */
+const HERO_ONLY_DEFINITION = {
+  version: 2,
+  blocks: [{ id: 'hero', type: 'hero', config: { headline: 'Emma & Jake' } }],
 }
 
 const CASES: readonly CardCase[] = [
   {
     name: 'the sample couple, light theme',
-    params: {
-      title: 'Emma & Jake',
-      startsAt: '2027-03-14T16:00:00',
-      kicker: 'You are invited',
-      venue: 'The Grounds of Alexandria, Sydney',
-      slug: 'emma-and-jake-7fq2',
-      theme: 'ivory',
+    title: 'Emma & Jake',
+    startsAt: '2027-03-14T16:00:00',
+    themeKey: 'ivory',
+    kicker: 'You are invited',
+    venue: 'The Grounds of Alexandria, Sydney',
+    content: {
+      version: 1,
+      blocks: {
+        hero: { eyebrow: 'You are invited', headline: 'Emma & Jake' },
+        'venue-map': { venueName: 'The Grounds of Alexandria, Sydney' },
+      },
     },
   },
   {
     name: 'two long names, dark theme',
-    params: {
-      title: 'Alexandra Konstantinopoulos & Christopher Featherstonehaugh',
-      startsAt: '2027-03-14T16:00:00',
-      kicker: 'You are invited',
-      venue: 'The Grounds of Alexandria, Sydney',
-      slug: 'alexandra-and-christopher-9kd1',
-      theme: 'midnight',
+    title: 'Alexandra Konstantinopoulos & Christopher Featherstonehaugh',
+    startsAt: '2027-03-14T16:00:00',
+    themeKey: 'midnight',
+    kicker: 'You are invited',
+    venue: 'The Grounds of Alexandria, Sydney',
+    content: {
+      version: 1,
+      blocks: {
+        hero: { eyebrow: 'You are invited', headline: 'Alexandra & Christopher' },
+        'venue-map': { venueName: 'The Grounds of Alexandria, Sydney' },
+      },
     },
   },
   {
     name: 'the two required fields and nothing else',
-    params: { title: 'Emma & Jake', startsAt: '2027-03-14T16:00:00' },
+    title: 'Emma & Jake',
+    startsAt: '2027-03-14T16:00:00',
+    themeKey: 'ivory',
+    definition: HERO_ONLY_DEFINITION,
+    content: { version: 1, blocks: {} },
   },
 ]
 
+const seeded = new Map<string, SeededEvent>()
+
+test.beforeAll(async () => {
+  for (const [index, scenario] of CASES.entries()) {
+    seeded.set(
+      scenario.name,
+      await seedEvent({
+        title: scenario.title,
+        startsAtLocal: scenario.startsAt,
+        timeZone: 'Australia/Sydney',
+        themeKey: scenario.themeKey,
+        state: 'live',
+        content: scenario.content,
+        ...(scenario.definition === undefined ? {} : { definition: scenario.definition }),
+        templateKey: `og-card-${index}-${scenario.themeKey}`,
+      })
+    )
+  }
+})
+
+function slugFor(scenario: CardCase): string {
+  const event = seeded.get(scenario.name)
+  if (event === undefined) throw new Error(`no event was seeded for "${scenario.name}"`)
+  return event.slug
+}
+
 /**
- * The plan the route will have produced for these parameters. The test uses it
- * to know which band of pixels the title occupies rather than hunting for the
+ * The plan the route will have produced for this event. The test uses it to
+ * know which band of pixels the title occupies rather than hunting for the
  * text, so a layout change moves the measurement with it.
  */
-function planFor(params: OgCardParams): OgCardPlan {
+function planFor(scenario: CardCase): OgCardPlan {
   const { siteUrl } = readSiteConfig()
 
   return planOgCard(
     {
-      title: params.title,
-      startsAtLocal: params.startsAt,
-      kicker: params.kicker,
-      venue: params.venue,
-      footer: ogCardFooter(siteUrl, params.slug),
+      title: scenario.title,
+      startsAtLocal: scenario.startsAt,
+      kicker: scenario.kicker,
+      venue: scenario.venue,
+      footer: ogCardFooter(siteUrl, slugFor(scenario)),
     },
-    seedThemeTokens(params.theme ?? 'ivory')
+    seedThemeTokens(scenario.themeKey)
   )
 }
 
+function cardUrlFor(baseUrl: string, scenario: CardCase): string {
+  const tokens = seedThemeTokens(scenario.themeKey)
+  const version = ogCardVersion(
+    {
+      title: scenario.title,
+      startsAt: scenario.startsAt,
+      kicker: scenario.kicker,
+      venue: scenario.venue,
+    },
+    tokens
+  )
+
+  return buildOgCardUrl(baseUrl, { slug: slugFor(scenario), v: version })
+}
+
 /**
- * Read from the seed file rather than through src/lib/og/themes.ts, which
- * imports the same JSON statically. Playwright runs as real ESM and would want
- * an import attribute for that; the seeding path reads bytes anyway.
+ * Read from the seed file rather than through a module that imports the same
+ * JSON statically. Playwright runs as real ESM and would want an import
+ * attribute for that; the seeding path reads bytes anyway.
  */
 function seedThemeTokens(key: string): ThemeTokens {
   const path = fileURLToPath(new URL(`../../templates/themes/${key}.json`, import.meta.url))
@@ -244,8 +322,8 @@ test.describe('the Open Graph share card', () => {
 
   for (const scenario of CASES) {
     test(`stays legible at thumbnail size: ${scenario.name}`, async ({ page, baseURL }) => {
-      const plan = planFor(scenario.params)
-      const url = buildOgCardUrl(baseURL!, scenario.params)
+      const plan = planFor(scenario)
+      const url = cardUrlFor(baseURL!, scenario)
 
       const response = await page.goto('/')
       expect(response?.status()).toBe(200)
@@ -318,24 +396,54 @@ test.describe('the Open Graph share card', () => {
     })
   }
 
-  test('refuses parameters it cannot draw a card from', async ({ request, baseURL }) => {
-    const response = await request.get(`${baseURL}/api/og?title=Emma&startsAt=2027-13-40T16:00:00`)
+  test('refuses a slug it could not look anything up by', async ({ request, baseURL }) => {
+    const response = await request.get(`${baseURL}/api/og?slug=Not%20A%20Slug`)
 
     expect(response.status()).toBe(400)
     const body = (await response.json()) as { error: string; issues: { path: string }[] }
     expect(body.error).toBe('invalid card parameters')
-    expect(body.issues[0]?.path).toBe('startsAt')
+    expect(body.issues[0]?.path).toBe('slug')
   })
 
-  test('is cacheable and not indexable', async ({ request, baseURL }) => {
-    const params = CASES[0]!.params
-    const response = await request.get(buildOgCardUrl(baseURL!, params))
+  test('has no card to draw for an event nobody published', async ({ request, baseURL }) => {
+    const missing = await request.get(`${baseURL}/api/og?slug=no-such-invitation-000000`)
+    expect(missing.status()).toBe(404)
 
-    expect(response.status()).toBe(200)
-    expect(response.headers()['content-type']).toBe('image/png')
-    expect(response.headers()['cache-control']).toContain('immutable')
+    // An unpublished event has nothing to share yet, and a card is a chat
+    // preview carrying a couple's names. It is not drawn until the page is.
+    const draft = await seedEvent({
+      title: 'A draft nobody has published',
+      startsAtLocal: '2027-03-14T16:00:00',
+      timeZone: 'Australia/Sydney',
+      themeKey: 'ivory',
+      state: 'unpublished',
+      templateKey: 'og-card-draft',
+    })
+    const unpublished = await request.get(`${baseURL}/api/og?slug=${draft.slug}`)
+
+    expect(unpublished.status()).toBe(404)
+  })
+
+  test('is immutable only when the URL names one rendering of the card', async ({
+    request,
+    baseURL,
+  }) => {
+    const scenario = CASES[0]!
+
+    const versioned = await request.get(cardUrlFor(baseURL!, scenario))
+    expect(versioned.status()).toBe(200)
+    expect(versioned.headers()['content-type']).toBe('image/png')
+    // Safe because the version digest changes the moment anything the card
+    // draws changes, so this URL can never mean anything else.
+    expect(versioned.headers()['cache-control']).toContain('immutable')
     // The card carries a buyer's names. It belongs in a chat bubble, not in a
     // search result of its own.
-    expect(response.headers()['x-robots-tag']).toBe('noindex')
+    expect(versioned.headers()['x-robots-tag']).toBe('noindex')
+
+    const bare = await request.get(`${baseURL}/api/og?slug=${slugFor(scenario)}`)
+    expect(bare.status()).toBe(200)
+    // "Whatever this event's card says now" is a different promise, and it gets
+    // the page's short lifetime rather than a year.
+    expect(bare.headers()['cache-control']).not.toContain('immutable')
   })
 })

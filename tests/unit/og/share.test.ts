@@ -10,14 +10,17 @@ import {
 
 const SITE_URL = 'https://invite.example'
 
-const PARAMS = {
+const PARAMS = { slug: 'emma-and-jake-7fq2', v: '1x8kq2' } as const
+
+const EVENT = {
+  siteUrl: SITE_URL,
+  slug: PARAMS.slug,
   title: 'Emma & Jake',
-  startsAt: '2027-03-14T16:00:00',
-  theme: 'ivory',
+  startsAtLocal: '2027-03-14T16:00:00',
   kicker: 'You are invited',
   venue: 'The Grounds of Alexandria, Sydney',
-  slug: 'emma-and-jake-7fq2',
-} as const
+  cardVersion: PARAMS.v,
+}
 
 describe('buildOgCardUrl', () => {
   it('produces an absolute URL, because a relative og:image never renders in a chat', () => {
@@ -35,12 +38,10 @@ describe('buildOgCardUrl', () => {
     if (parsed.ok) expect(parsed.params).toEqual(PARAMS)
   })
 
-  it('leaves absent fields out of the query rather than sending empty ones', () => {
-    const url = new URL(
-      buildOgCardUrl(SITE_URL, { title: 'Emma & Jake', startsAt: '2027-03-14T16:00:00' })
-    )
+  it('leaves the version out of the query rather than sending an empty one', () => {
+    const url = new URL(buildOgCardUrl(SITE_URL, { slug: PARAMS.slug }))
 
-    expect([...url.searchParams.keys()].sort()).toEqual(['startsAt', 'title'])
+    expect([...url.searchParams.keys()]).toEqual(['slug'])
   })
 })
 
@@ -49,58 +50,56 @@ describe('parseOgCardParams', () => {
     return parseOgCardParams(new URLSearchParams(query))
   }
 
-  it('requires the two fields the card cannot be drawn without', () => {
-    const parsed = parse({ kicker: 'You are invited' })
+  it('requires the slug, which is the only thing the card is looked up by', () => {
+    const parsed = parse({ v: '1x8kq2' })
 
     expect(parsed.ok).toBe(false)
-    if (!parsed.ok) {
-      expect(parsed.issues.map((issue) => issue.path).sort()).toEqual(['startsAt', 'title'])
+    if (!parsed.ok) expect(parsed.issues.map((issue) => issue.path)).toEqual(['slug'])
+  })
+
+  it('rejects anything the events table could not hold as a slug', () => {
+    for (const slug of ['Emma-And-Jake', 'emma_and_jake', 'em', 'a'.repeat(65), '../secret']) {
+      const parsed = parse({ slug })
+
+      expect(parsed.ok, `"${slug}" was accepted as a slug`).toBe(false)
+      if (!parsed.ok) expect(parsed.issues[0]?.path).toBe('slug')
     }
   })
 
-  it('rejects a title longer than the events table will store', () => {
-    const parsed = parse({ title: 'A'.repeat(161), startsAt: '2027-03-14T16:00:00' })
+  it('rejects a version that is not a digest, so the immutable URL space stays small', () => {
+    const parsed = parse({ slug: PARAMS.slug, v: 'not a digest' })
 
     expect(parsed.ok).toBe(false)
-    if (!parsed.ok) expect(parsed.issues[0]?.path).toBe('title')
+    if (!parsed.ok) expect(parsed.issues[0]?.path).toBe('v')
   })
 
-  it('rejects a timestamp that is not the stored local form', () => {
-    const parsed = parse({ title: 'Emma & Jake', startsAt: '2027-03-14T16:00:00Z' })
-
-    expect(parsed.ok).toBe(false)
-    if (!parsed.ok) expect(parsed.issues[0]?.path).toBe('startsAt')
-  })
-
-  it('rejects a theme that is not a seeded one, rather than falling back silently', () => {
-    const parsed = parse({
-      title: 'Emma & Jake',
-      startsAt: '2027-03-14T16:00:00',
-      theme: 'neon',
-    })
-
-    expect(parsed.ok).toBe(false)
-    if (!parsed.ok) expect(parsed.issues[0]?.path).toBe('theme')
-  })
-
-  it('leaves the theme unset when none was asked for, rather than inventing one', () => {
-    const parsed = parse({ title: 'Emma & Jake', startsAt: '2027-03-14T16:00:00' })
+  it('accepts a bare slug, and leaves the version unset rather than inventing one', () => {
+    const parsed = parse({ slug: PARAMS.slug })
 
     expect(parsed.ok).toBe(true)
-    if (parsed.ok) expect(parsed.params.theme).toBeUndefined()
+    if (parsed.ok) expect(parsed.params.v).toBeUndefined()
+  })
+
+  it('has nowhere to put the fields the card used to take from the caller', () => {
+    const parsed = parse({
+      slug: PARAMS.slug,
+      v: PARAMS.v,
+      title: 'Somebody else entirely',
+      kicker: 'A message from a stranger',
+    })
+
+    // Extra parameters are ignored rather than refused, because a chat app or a
+    // link shortener appending its own is not an attack and a 400 there is a
+    // preview that never renders. What matters is that nothing a caller sends
+    // can reach the card: the parsed surface is a slug and a cache key, and the
+    // route draws every word from the event row.
+    expect(parsed.ok).toBe(true)
+    if (parsed.ok) expect(Object.keys(parsed.params).sort()).toEqual(['slug', 'v'])
   })
 })
 
 describe('buildEventShareMetadata', () => {
-  const metadata = buildEventShareMetadata({
-    siteUrl: SITE_URL,
-    slug: PARAMS.slug,
-    title: PARAMS.title,
-    startsAtLocal: PARAMS.startsAt,
-    kicker: PARAMS.kicker,
-    venue: PARAMS.venue,
-    theme: PARAMS.theme,
-  })
+  const metadata = buildEventShareMetadata(EVENT)
 
   it('points og:url at the page a guest opens', () => {
     expect(metadata.openGraph.url).toBe(`${SITE_URL}/e/${PARAMS.slug}`)
@@ -115,10 +114,21 @@ describe('buildEventShareMetadata', () => {
     expect(new URL(image!.url).origin).toBe(SITE_URL)
   })
 
+  it('puts the slug and the version in the card URL, and none of the card text', () => {
+    const url = new URL(metadata.openGraph.images[0]!.url)
+
+    expect([...url.searchParams.keys()].sort()).toEqual(['slug', 'v'])
+    expect(url.searchParams.get('slug')).toBe(PARAMS.slug)
+    expect(url.searchParams.get('v')).toBe(PARAMS.v)
+    // The whole point of the lookup: nothing a card draws travels in its URL.
+    expect(url.search).not.toContain('Emma')
+    expect(url.search).not.toContain('Alexandria')
+  })
+
   it('writes alt text that says what the card says', () => {
     const image = metadata.openGraph.images[0]
 
-    expect(image?.alt).toContain(PARAMS.title)
+    expect(image?.alt).toContain(EVENT.title)
     expect(image?.alt).toContain('Sunday 14 March 2027')
   })
 
@@ -137,8 +147,8 @@ describe('buildEventShareMetadata', () => {
     const withoutVenue = buildEventShareMetadata({
       siteUrl: SITE_URL,
       slug: PARAMS.slug,
-      title: PARAMS.title,
-      startsAtLocal: PARAMS.startsAt,
+      title: EVENT.title,
+      startsAtLocal: EVENT.startsAtLocal,
     })
 
     expect(withoutVenue.description).toBe('Sunday 14 March 2027 · 4:00 pm. RSVP online.')
