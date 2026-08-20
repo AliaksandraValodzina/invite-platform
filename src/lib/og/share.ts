@@ -11,6 +11,14 @@
  *     the bubble out before the image arrives instead of after.
  *   - the image has alt text, because the preview is read aloud by screen
  *     readers and because a card that fails to load still has to say something.
+ *
+ * The URL carries a slug and a version, and nothing else. It used to carry the
+ * card's words, which meant anyone could ask this origin for a card saying
+ * whatever they liked. The route now resolves every field from the event row,
+ * so the only thing a caller can choose is which published event to ask about,
+ * which is a thing they could already read by opening the page. `v` is a digest
+ * of what the card draws (see ogCardVersion) and exists so that editing an event
+ * changes its card's URL, which is what makes an immutable cache lifetime safe.
  */
 
 import { z } from 'zod'
@@ -18,28 +26,22 @@ import { z } from 'zod'
 import { OG_CARD_HEIGHT, OG_CARD_WIDTH } from './contract'
 import { formatEventWhen } from './format'
 
-/** The seeded themes a card may be rendered in. */
-export const OG_THEME_KEYS = ['ivory', 'midnight'] as const
-
-export type OgThemeKey = (typeof OG_THEME_KEYS)[number]
-
-/** Matches the events table: title is checked at 160, the slug pattern is the slug pattern. */
+/** Matches `events_slug_format` in 20260819010400_events.sql. */
 export const ogCardParamsSchema = z.strictObject({
-  title: z.string().trim().min(1).max(160),
-  startsAt: z
-    .string()
-    .regex(
-      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?$/,
-      'must be a stored local timestamp such as 2027-03-14T16:00:00'
-    ),
-  theme: z.enum(OG_THEME_KEYS).optional(),
-  kicker: z.string().trim().min(1).max(60).optional(),
-  venue: z.string().trim().min(1).max(120).optional(),
   slug: z
     .string()
     .min(3)
     .max(64)
-    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'must be an event slug'),
+  /**
+   * Optional, and the response's cache lifetime depends on it. A URL with a
+   * version identifies one rendering of one event forever, so it is served
+   * immutable. A URL without one is just "the current card for this slug", and
+   * is served with the same short lifetime as the page.
+   */
+  v: z
+    .string()
+    .regex(/^[0-9a-z]{1,13}$/, 'must be a card version digest')
     .optional(),
 })
 
@@ -70,7 +72,7 @@ export function parseOgCardParams(search: URLSearchParams): OgParamsOutcome {
   }
 }
 
-const PARAM_ORDER = ['title', 'startsAt', 'theme', 'kicker', 'venue', 'slug'] as const
+const PARAM_ORDER = ['slug', 'v'] as const
 
 export function buildOgCardUrl(siteUrl: string, params: OgCardParams): string {
   const url = new URL('/api/og', siteUrl)
@@ -96,7 +98,8 @@ export type ShareMetadataInput = {
   readonly startsAtLocal: string
   readonly kicker?: string | undefined
   readonly venue?: string | undefined
-  readonly theme?: OgThemeKey | undefined
+  /** Digest from ogCardVersion. Absent means the card URL is not immutable. */
+  readonly cardVersion?: string | undefined
 }
 
 export type ShareImage = {
@@ -129,12 +132,8 @@ export function buildEventShareMetadata(input: ShareMetadataInput): ShareMetadat
   const when = formatEventWhen(input.startsAtLocal)
 
   const params: OgCardParams = {
-    title: input.title,
-    startsAt: input.startsAtLocal,
-    ...(input.theme === undefined ? {} : { theme: input.theme }),
-    ...(input.kicker === undefined ? {} : { kicker: input.kicker }),
-    ...(input.venue === undefined ? {} : { venue: input.venue }),
     slug: input.slug,
+    ...(input.cardVersion === undefined ? {} : { v: input.cardVersion }),
   }
 
   const imageUrl = buildOgCardUrl(input.siteUrl, params)

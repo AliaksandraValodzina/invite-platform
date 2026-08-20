@@ -183,8 +183,18 @@ values (
   1, true, 1, '{"version": 1, "blocks": {}}'::jsonb
 );
 
+-- Scoped to this test's own two events. Counting every published revision in
+-- the database made this assertion true only on an empty one, so it began
+-- failing the moment scripts/seed-event.ts put a real event next to it, which
+-- is a workflow the read path expects.
 select is(
-  (select count(*)::integer from public.event_content where is_published),
+  (select count(*)::integer
+     from public.event_content
+    where is_published
+      and event_id in (
+        '44444444-4444-4444-4444-444444444401',
+        '44444444-4444-4444-4444-444444444402'
+      )),
   2,
   'the one-published-revision rule is per event, not global'
 );

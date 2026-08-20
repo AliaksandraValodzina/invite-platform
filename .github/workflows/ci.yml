@@ -1,11 +1,12 @@
 # The pull request gate.
 #
-# Owned by the Phase 0.1 scaffolding task. If another task needs CI to do
-# something new, for example the Postgres service container the schema task will
-# need in order to run migrations and prove RLS policies, send the requirement
-# rather than editing this file. Two tasks editing one workflow produces runs
-# nobody can attribute. There is a worked example of how a database job slots in
-# at the bottom of this file.
+# Owned by one task at a time. If another task needs CI to do something new,
+# send the requirement rather than editing this file. Two tasks editing one
+# workflow produces runs nobody can attribute.
+#
+# The `database` job at the bottom is the one the Phase 0.1 scaffolding left a
+# worked example for, filled in by the stage 1 read path task, which is the
+# first work in this repo that reads a row.
 #
 # Two properties this file is built around, both of which have tests:
 #
@@ -111,7 +112,7 @@ jobs:
           # Anything that can alter rendered output, routing, the build, or the
           # browser suite itself. Docs, unit tests and lint config are excluded
           # on purpose, because the steps above already cover them.
-          if echo "$changed" | grep -Eq '^(src/|public/|tests/e2e/|playwright\.config\.ts$|next\.config\.ts$|postcss\.config\.mjs$|package\.json$|package-lock\.json$|\.github/workflows/ci\.yml$)'; then
+          if echo "$changed" | grep -Eq '^(src/|public/|templates/|supabase/|scripts/|tests/e2e/|tests/support/|playwright\.config\.ts$|next\.config\.ts$|postcss\.config\.mjs$|package\.json$|package-lock\.json$|\.github/workflows/ci\.yml$)'; then
             echo "e2e=true" >> "$GITHUB_OUTPUT"
             echo "Playwright will run."
           else
@@ -179,6 +180,33 @@ jobs:
       - name: Install Playwright browser
         run: npx playwright install chromium
 
+      # The browser suite reads real rows now: it walks all four serving states
+      # from `public.event_state_at`, and it seeds them through the same script
+      # the captain runs by hand. Everything before this step runs without any
+      # of it, which is what keeps the build's own claim true.
+      - name: Install the Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.115.0
+
+      # Only the containers something here talks to. The suite needs Postgres,
+      # PostgREST and the auth API to seed an owner; realtime, storage, studio,
+      # analytics and the rest are images to pull for no assertion.
+      - name: Start the local Supabase stack
+        run: supabase start -x realtime,storage-api,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
+
+      # The CLI's local keys are its well known development ones, published in
+      # Supabase's own documentation. They are not secrets and no hosted value
+      # appears anywhere in this workflow.
+      - name: Point the suite at that stack
+        run: |
+          set -euo pipefail
+          status=$(supabase status -o json)
+          {
+            echo "SUPABASE_URL=$(echo "$status" | jq -r .API_URL)"
+            echo "SUPABASE_SERVICE_ROLE_KEY=$(echo "$status" | jq -r .SERVICE_ROLE_KEY)"
+          } >> "$GITHUB_ENV"
+
       - name: Run Playwright smoke tests
         run: npm run test:e2e
 
@@ -197,6 +225,69 @@ jobs:
           echo "seconds=$seconds" >> "$GITHUB_OUTPUT"
           echo "e2e finished in ${seconds}s" >> "$GITHUB_STEP_SUMMARY"
 
+  # Postgres, the migrations, and the two proofs that only a real database can
+  # give: the pgTAP suite, which switches role inside a transaction, and the
+  # anonymous probe, which goes through PostgREST and the auth API the way an
+  # attacker would. They are not the same claim. A stray grant, a policy written
+  # without a `to authenticated` clause, or a table exposed through a view would
+  # pass one and fail the other.
+  #
+  # Unfiltered on purpose. A database job that only runs when `supabase/`
+  # changed misses the case that matters most: application code that starts
+  # reading a table it should not be able to reach.
+  #
+  # Cost: this pulls and starts containers, so budget one to two billed minutes
+  # per pull request on top of what was here before, and the same again inside
+  # `e2e`, which needs a database for the same reason. Folding the two together
+  # would save that second start and cost the ability to tell a schema failure
+  # from a rendering one at a glance. Worth revisiting if the bill bites.
+  database:
+    name: migrations, policies and RLS
+    runs-on: ubuntu-latest
+    outputs:
+      duration: ${{ steps.duration.outputs.seconds }}
+    steps:
+      - name: Record start time
+        run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # No `npm ci`. scripts/check-anon-access.mjs has no dependencies and reads
+      # its credentials from `supabase status`, so this job never installs the
+      # application's package tree.
+      - name: Install the Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.115.0
+
+      # `supabase start` applies every migration in supabase/migrations to a
+      # database created from nothing, which is the only way to know they still
+      # apply in order to an empty one.
+      - name: Start the local Supabase stack, applying every migration
+        run: supabase start -x realtime,storage-api,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
+
+      - name: Run the pgTAP suite
+        run: supabase test db
+
+      # An RLS test that only asserts an allowed read passes against a table
+      # with RLS switched off entirely. This one asserts the denials, against
+      # rows it seeded through the service role first, so every "cannot read" is
+      # a denial rather than an empty database.
+      - name: Prove an anonymous client is still denied
+        run: node scripts/check-anon-access.mjs
+
+      - name: Report job duration
+        id: duration
+        if: ${{ !cancelled() }}
+        run: |
+          seconds=$(( $(date +%s) - JOB_START ))
+          echo "seconds=$seconds" >> "$GITHUB_OUTPUT"
+          echo "database finished in ${seconds}s" >> "$GITHUB_STEP_SUMMARY"
+
   # The single required status check. Set branch protection to require this and
   # nothing else: requiring `playwright smoke` directly would block every pull
   # request where it is legitimately skipped.
@@ -208,7 +299,7 @@ jobs:
   gate:
     name: CI gate
     if: ${{ always() }}
-    needs: [static, e2e]
+    needs: [static, e2e, database]
     runs-on: ubuntu-latest
     steps:
       - name: Record start time
@@ -245,6 +336,8 @@ jobs:
           STATIC_SECONDS: ${{ needs.static.outputs.duration }}
           E2E_RESULT: ${{ needs.e2e.result }}
           E2E_SECONDS: ${{ needs.e2e.outputs.duration }}
+          DATABASE_RESULT: ${{ needs.database.result }}
+          DATABASE_SECONDS: ${{ needs.database.outputs.duration }}
         shell: bash
         run: |
           set -uo pipefail
@@ -271,9 +364,10 @@ jobs:
             echo ""
             echo "| Job | Result | Wall clock | Billed minutes |"
             echo "| --- | --- | --- | --- |"
-            row "static" "$STATIC_RESULT" "$STATIC_SECONDS"
-            row "e2e"    "$E2E_RESULT"    "$E2E_SECONDS"
-            row "gate"   "success"        "$gate_seconds"
+            row "static"   "$STATIC_RESULT"   "$STATIC_SECONDS"
+            row "e2e"      "$E2E_RESULT"      "$E2E_SECONDS"
+            row "database" "$DATABASE_RESULT" "$DATABASE_SECONDS"
+            row "gate"     "success"          "$gate_seconds"
             echo ""
             echo "**Total billed: ${total} minute(s).**"
             echo ""
@@ -281,48 +375,18 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
 # ---------------------------------------------------------------------------
-# Room for the schema task's database job
+# What the database job cost, and what it bought
 # ---------------------------------------------------------------------------
 #
-# The schema task needs to run migrations and prove RLS policies in CI, which
-# means Postgres. Send the requirement to firstmate and it gets added here. It
-# is written out rather than described so the shape is not re-litigated:
+# The worked example that used to sit here has been built as the `database` job
+# above. It differs from the sketch in one way worth recording: it starts the
+# Supabase CLI's stack rather than a bare `postgres:17` service container.
 #
-#   database:
-#     name: migrations, policies and RLS
-#     runs-on: ubuntu-latest
-#     outputs:
-#       duration: ${{ steps.duration.outputs.seconds }}
-#     services:
-#       postgres:
-#         image: postgres:17            # pin the major, match what Supabase runs
-#         env:
-#           POSTGRES_PASSWORD: postgres
-#         options: >-
-#           --health-cmd pg_isready
-#           --health-interval 10s
-#           --health-timeout 5s
-#           --health-retries 5
-#         ports: ['5432:5432']
-#     steps:
-#       - ... checkout, setup-node, npm ci
-#       - run: supabase db push        # or psql against the migrations directory
-#         env:
-#           DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
-#       - run: npm run test:rls        # must assert a denied read, not just an allowed one
-#
-# Three things whoever adds it has to get right:
-#
-#   1. Add `database` to the gate's `needs`. That is all that is required to
-#      make it enforced: the gate reads the whole `needs` context, so a failing
-#      or skipped database job turns the required check red without anyone
-#      editing ci-gate.sh. There are tests for exactly this in ci-gate.test.sh.
-#   2. Only add a CONDITIONAL_JOBS entry if it should be path filtered, and if
-#      so, add `supabase/` to the filter above and emit a second decision. An
-#      unfiltered database job is the safer default and costs one billed minute.
-#   3. A service container is billed as part of the job that declares it, so
-#      this is roughly one to two more billed minutes per pull request. Worth
-#      knowing before it lands, given the repo is private and metered.
-#
-# An RLS test that only asserts an allowed read passes against a table with RLS
-# switched off entirely. The interesting assertion is the denied one.
+# The reason is the migrations. They reference `auth.users`, the `anon`,
+# `authenticated` and `service_role` roles, `pg_cron` and pgTAP, none of which
+# exist in the stock Postgres image, so a service container would need a
+# hand written shim standing in for Supabase. A shim that drifts from the real
+# thing turns a green migration run into a claim about the shim. Two of the
+# three things the sketch said to get right still hold exactly as written:
+# `database` is in the gate's `needs` with no CONDITIONAL_JOBS entry, so it must
+# succeed; and the containers are billed to the job that starts them.

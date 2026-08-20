@@ -1,5 +1,19 @@
 import { defineConfig, devices } from '@playwright/test'
 
+/*
+ * The specs seed real events through the service role, so they need the same
+ * two variables the app does. Next loads .env.local for the server it starts;
+ * this loads it for the test process as well, so a local run needs no exports.
+ * CI sets them on the job instead, and a missing file is not an error: the
+ * suite's own checks say what is absent, and they say it better than a config
+ * file crashing would.
+ */
+try {
+  process.loadEnvFile('.env.local')
+} catch {
+  /* no local file, which is the normal case in CI */
+}
+
 const PORT = Number(process.env.PORT ?? 3000)
 const BASE_URL = `http://127.0.0.1:${PORT}`
 const IS_CI = Boolean(process.env.CI)
