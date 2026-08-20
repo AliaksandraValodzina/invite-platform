@@ -34,6 +34,13 @@
  * two of them are not the page: the route's `revalidate`, the response header
  * set in `src/proxy.ts`, and `tests/e2e/caching.spec.ts`, which reads the header
  * off the wire.
+ *
+ * The dashboard's header is the opposite decision, made for the same reason.
+ * That page is a list of other people's names, contact details and dietary
+ * requirements, assembled for one signed-in buyer. Nothing between the database
+ * and their screen may keep a copy of it: not a CDN, which would be serving one
+ * buyer's guest list from a shared cache, and not the browser, where a back
+ * button on a shared laptop is a real way for it to be read by somebody else.
  */
 
 /** Seconds the rendered page, and the reads behind it, may be reused. */
@@ -49,6 +56,16 @@ export const GUEST_PAGE_CACHE_CONTROL = [
   `stale-while-revalidate=${GUEST_PAGE_STALE_WHILE_REVALIDATE_SECONDS}`,
   'must-revalidate',
 ].join(', ')
+
+/**
+ * No copy of a buyer's replies is kept anywhere.
+ *
+ * `private` says no shared cache may hold it. `no-store` says no cache may hold
+ * it at all, which is the one that covers the browser's own disk. Both are
+ * present because they are not the same instruction and the weaker one alone is
+ * the common mistake.
+ */
+export const DASHBOARD_CACHE_CONTROL = 'private, no-store, max-age=0, must-revalidate'
 
 /** Cache tag for one event, so a publish can invalidate it by id rather than by path. */
 export function eventCacheTag(slug: string): string {

@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "blocks": [
     {
       "id": "hero",
@@ -19,8 +19,16 @@
       "config": {
         "heading": "The day",
         "items": [
-          { "icon": "calendar", "label": "When", "source": "event-date" },
-          { "icon": "clock", "label": "Ceremony", "source": "event-start-time" },
+          {
+            "icon": "calendar",
+            "label": "When",
+            "source": "event-date"
+          },
+          {
+            "icon": "clock",
+            "label": "Ceremony",
+            "source": "event-start-time"
+          },
           {
             "icon": "dress-code",
             "label": "Dress code",
@@ -51,7 +59,10 @@
         "venueName": "The Boathouse, Shelly Beach",
         "address": "1 Marine Parade, Manly NSW 2095",
         "directionsUrl": "https://maps.google.com/?q=The+Boathouse+Shelly+Beach+Manly",
-        "coordinates": { "lat": -33.8006, "lng": 151.2938 },
+        "coordinates": {
+          "lat": -33.8006,
+          "lng": 151.2938
+        },
         "note": "The ceremony is on the lawn above the beach."
       }
     },
@@ -65,11 +76,10 @@
         "successMessage": "Thank you. Sarah and Tom have your reply.",
         "closedMessage": "RSVPs are closed for this event. Please contact Sarah or Tom directly.",
         "deadlineNote": "Please reply by 1 February 2026.",
-        "fields": {
-          "email": { "enabled": true, "label": "Email, so we can send you the details" },
-          "guestCount": { "enabled": true, "label": "How many of you?", "max": 6 },
-          "dietary": { "enabled": true, "label": "Anything we should know about food?" },
-          "message": { "enabled": true, "label": "A note for Sarah and Tom" }
+        "guestCount": {
+          "enabled": true,
+          "label": "How many of you?",
+          "max": 6
         }
       }
     }

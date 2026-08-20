@@ -22,6 +22,7 @@ import ivory from '../../../templates/themes/ivory.json'
 import masthead from '../../../templates/themes/masthead.json'
 import midnight from '../../../templates/themes/midnight.json'
 import type { EventSchedule } from '@/lib/event/time'
+import { DEFAULT_RSVP_QUESTIONS, type RsvpQuestion } from '@/lib/rsvp/questions'
 
 export const PREVIEW_DEFINITION: unknown = classicInvitation
 
@@ -133,16 +134,46 @@ export const PREVIEW_FIXTURES: Readonly<Record<string, unknown>> = {
         successMessage: 'Thank you. Emma and Jake have your reply.',
         closedMessage: 'RSVPs are closed for this event. Please contact Emma or Jake directly.',
         deadlineNote: 'Please reply by 14 February 2027.',
-        fields: {
-          email: { enabled: true, label: 'Email, so we can send you the details' },
-          guestCount: { enabled: true, label: 'How many of you?', max: 6 },
-          dietary: { enabled: true, label: 'Anything we should know about food?' },
-          message: { enabled: true, label: 'A note for Emma and Jake' },
-        },
+        guestCount: { enabled: true, label: 'How many of you?', max: 6 },
       },
     },
   },
 }
+
+/**
+ * The questions the preview draws, since a question is a row and the preview
+ * reads no rows.
+ *
+ * This is the default set from `src/lib/rsvp/questions.ts` with ids attached,
+ * plus one choice question that no event ships with. The extra one is not
+ * decoration: multiple_choice and checkbox are shipped question types with no
+ * shipped default question, so without it the two controls the block set draws
+ * for them would never be looked at on a phone until the first buyer added one.
+ */
+export const PREVIEW_QUESTIONS: readonly RsvpQuestion[] = [
+  ...DEFAULT_RSVP_QUESTIONS.map((question, index) => ({
+    id: `preview-${question.key}`,
+    type: question.type,
+    prompt: question.prompt,
+    position: index + 1,
+    required: question.required,
+    options: question.options,
+    piiClass: question.piiClass,
+  })),
+  {
+    id: 'preview-courses',
+    type: 'multiple_choice' as const,
+    prompt: 'Which will you have?',
+    position: DEFAULT_RSVP_QUESTIONS.length + 1,
+    required: false,
+    options: [
+      { value: 'fish', label: 'Fish' },
+      { value: 'beef', label: 'Beef' },
+      { value: 'vegetarian', label: 'Vegetarian' },
+    ],
+    piiClass: 'none' as const,
+  },
+]
 
 export const PREVIEW_FIXTURE_NAMES = Object.keys(PREVIEW_FIXTURES)
 

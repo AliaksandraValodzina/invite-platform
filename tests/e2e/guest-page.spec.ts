@@ -1,9 +1,11 @@
 import { expect, test } from '@playwright/test'
 
 import type { SeededEvent } from '../../scripts/seed-event'
+import { DEFAULT_RSVP_QUESTIONS } from '../../src/lib/rsvp/questions.ts'
 import {
   GUEST_CLOSED_MESSAGE,
   GUEST_HEADLINE,
+  GUEST_QUESTION_PROMPTS,
   GUEST_TITLE,
   GUEST_VENUE,
   MISSING_SLUG,
@@ -70,7 +72,7 @@ test.describe('the guest page', () => {
 
     // Replies are open: the form is there, and it is the buyer's copy on it.
     await expect(page.getByRole('button', { name: 'Send our reply' })).toBeVisible()
-    await expect(page.getByLabel('Your name')).toBeVisible()
+    await expect(page.getByLabel(GUEST_QUESTION_PROMPTS.name as string)).toBeVisible()
   })
 
   test('keeps serving after hosting lapses, with replies closed', async ({ page }) => {
@@ -85,7 +87,7 @@ test.describe('the guest page', () => {
     // against lapsed hosting is the thing grace must not do.
     await expect(page.getByText(GUEST_CLOSED_MESSAGE)).toBeVisible()
     await expect(page.getByRole('button', { name: 'Send our reply' })).toHaveCount(0)
-    await expect(page.getByLabel('Your name')).toHaveCount(0)
+    await expect(page.getByLabel(GUEST_QUESTION_PROMPTS.name as string)).toHaveCount(0)
   })
 
   test('shows the designed unpublished notice, and none of the event', async ({ page }) => {
@@ -201,18 +203,26 @@ test.describe('the guest page', () => {
     )
   })
 
-  test('refuses to store a reply, rather than thanking a guest for nothing', async ({ page }) => {
+  test('asks the questions the event stores, in the order it stores them', async ({ page }) => {
     await page.goto(`/e/${slugFor('live')}`)
 
-    await page.getByLabel('Your name').fill('A Guest')
-    await page.getByRole('button', { name: 'Send our reply' }).click()
+    /*
+     * The form is drawn from `rsvp_questions`, not from the template document,
+     * so this is the assertion that the page and the database agree about what
+     * this event asks. The whole reply path is walked in tests/e2e/replies.spec.ts.
+     */
+    const prompts = await page
+      .locator('form label, form legend')
+      .evaluateAll((nodes) => nodes.map((node) => node.textContent?.trim()))
 
-    // Stage 2 builds the reply path. Until it does, the form has to say so:
-    // a success message over a write that never happened is the failure mode
-    // that is invisible to everyone until the buyer counts their replies.
-    await expect(page.getByText('Nothing was sent')).toBeVisible()
-    await expect(
-      page.getByText('Thank you. Wilhelmina and Bartholomew have your reply.')
-    ).toHaveCount(0)
+    for (const question of DEFAULT_RSVP_QUESTIONS) {
+      expect(prompts).toContain(question.prompt)
+    }
+
+    // And what happens to it, said on the form rather than only in a policy.
+    await expect(page.getByRole('link', { name: 'What happens to it' })).toHaveAttribute(
+      'href',
+      '/privacy'
+    )
   })
 })

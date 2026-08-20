@@ -60,13 +60,25 @@ refusing to show. Both are asserted in `tests/e2e/guest-page.spec.ts` by
 searching the served markup for a fixture name unusual enough that finding it can
 only mean it leaked.
 
-## Replies, in stage 1
+## Replies
 
 The RSVP block takes `submit` as a required prop so a form with nowhere to send
-a reply cannot be rendered by accident. `src/app/e/[slug]/actions.ts` answers
-that prop with a refusal, because the reply path is stage 2. It returns a
-failure rather than `{ ok: true }`: a form that thanks a guest and stores
-nothing is invisible to everyone until the buyer counts their replies.
+a reply cannot be rendered by accident. `src/app/e/[slug]/actions.ts` is that
+prop, and it forwards to the one function that stores a reply. The whole reply
+path, including why the questions are rows rather than template config, is
+`docs/replies.md`.
+
+Two things about it that belong here, because they are about serving:
+
+The form is drawn from the event's live questions, which come back on the **same
+PostgREST request** as the event itself. Same argument as `serving_state`: a
+second read would be a second clock and a second cache lifetime, and the form a
+guest fills in has to be the form the write path is about to validate against.
+
+The write path reads the event again, uncached, and `public.submit_rsvp` reads
+the serving state a third time inside the transaction that does the write. That
+is deliberate. The page a guest is looking at may be a minute out of date about
+whether replies are open; the decision to store what they typed never is.
 
 ## Caching, and why it is a privacy control
 
@@ -138,6 +150,19 @@ rather than getting one of their own.
 **Not yet verified:** the CDN half. There is no deployment, so nothing here has
 been seen through an edge cache. The by-hand `curl` against the real host stays
 on the go-live checklist below.
+
+### The dashboard is the opposite decision
+
+`/dashboard/*` carries `private, no-store, max-age=0, must-revalidate`, set in
+the same place for the same reason. It is a list of other people's names,
+contact details and dietary requirements assembled for one signed-in buyer:
+`public` there would be one buyer's guest list in a CDN, and a browser cache is
+how the next person to press the back button on a shared laptop reads it.
+
+`src/proxy.ts` also refreshes the buyer's access token when it has expired,
+because a server component cannot set a cookie and Next only allows that in a
+route handler or a server action. It is the one place that runs before a page and
+can still change the response, which is what both of its jobs need.
 
 ### Invalidation
 

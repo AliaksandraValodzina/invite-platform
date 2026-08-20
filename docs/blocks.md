@@ -198,11 +198,28 @@ here so the next task does not rediscover it.
   part of a picture matters. The cost is real, and it is why the committed
   placeholder is a crop rather than a whole card: artwork with words painted
   into it renders with the words in it. See `docs/template-format.md`.
-- **No copy for the fields the format does not carry.** The RSVP name and
-  attendance labels, the countdown unit names and the "Get directions" label are
-  block set copy, because `fields` is a record of four optional questions and the
+- **No copy for the fields the format does not carry.** The RSVP attendance
+  labels, the countdown unit names and the "Get directions" label are block set
+  copy, because attendance is an envelope column rather than a question and the
   countdown stores unit keys rather than labels. Rewording any of them is a
   config field and a version migration, not an edit in a component.
+
+### The RSVP form draws two different kinds of thing
+
+Since stage 2 the form is not one list of fields. **Attendance and party size**
+are envelope columns on `rsvps`, drawn from the block config, and neither is
+ever optional. **Everything else is a question**, a row in `rsvp_questions`
+reaching the block through `BlockContext` and drawn by its type.
+
+The block config carries no questions at all. That is what stops a stored
+document introducing guest personal information nobody classified: every
+question carries a `pii_class`, and that column is what the retention sweep
+reads. `docs/replies.md` has the model.
+
+The control switch is exhaustive against the question type union, so a sixth
+question type fails the typecheck here rather than rendering nothing. Same
+guarantee `renderBlock` gives for block types, for the same reason: a control
+that silently does not appear is an answer silently not collected.
 
 ## The preview route
 

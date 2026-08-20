@@ -24,6 +24,7 @@ import {
 } from '@/components/blocks'
 import { ThemeScope } from '@/components/theme-scope'
 import { resolveEventSchedule, type ResolvedSchedule } from '@/lib/event/time'
+import type { RsvpQuestion } from '@/lib/rsvp/questions'
 import {
   BLOCK_TYPES,
   templateDefinitionPipeline,
@@ -49,6 +50,102 @@ function schedule(endsAtLocal: string | null = '2027-03-14T23:30:00'): ResolvedS
   return resolved
 }
 
+/**
+ * The questions an event asks, as rows rather than as template config.
+ *
+ * One of each shipped type, because the block draws a different control for
+ * each and a fixture with only text questions would let the choice controls
+ * rot. Ids are readable rather than uuids so a failing assertion says which
+ * question it was about.
+ */
+const QUESTIONS: readonly RsvpQuestion[] = [
+  {
+    id: 'name',
+    type: 'short_answer',
+    prompt: 'Your name',
+    position: 1,
+    required: true,
+    options: null,
+    piiClass: 'identity',
+  },
+  {
+    id: 'email',
+    type: 'email',
+    prompt: 'Email, so we can send you the details',
+    position: 2,
+    required: false,
+    options: null,
+    piiClass: 'contact',
+  },
+  {
+    id: 'dietary',
+    type: 'long_answer',
+    prompt: 'Anything we should know about food?',
+    position: 3,
+    required: false,
+    options: null,
+    piiClass: 'sensitive',
+  },
+  {
+    id: 'course',
+    type: 'multiple_choice',
+    prompt: 'Which will you have?',
+    position: 4,
+    required: false,
+    options: [
+      { value: 'fish', label: 'Fish' },
+      { value: 'beef', label: 'Beef' },
+    ],
+    piiClass: 'none',
+  },
+  {
+    id: 'events',
+    type: 'checkbox',
+    prompt: 'Which events will you be at?',
+    position: 5,
+    required: false,
+    options: [
+      { value: 'ceremony', label: 'Ceremony' },
+      { value: 'dinner', label: 'Dinner' },
+    ],
+    piiClass: 'none',
+  },
+]
+
+/**
+ * The control a form field name belongs to, read out of the markup.
+ *
+ * Attribute order is React's business and changes between versions, so the
+ * assertions above go through this rather than through a regex that happens to
+ * match today's order. It reads the tag, the type and whether the control is
+ * required, which is what the tests are actually about.
+ */
+function controlFor(
+  markup: string,
+  name: string
+): { tag: string; type: string | null; required: boolean } | null {
+  const match = new RegExp(`<(input|textarea|select)([^>]*name="${name}"[^>]*)>`).exec(markup)
+  if (match === null) return null
+
+  const attributes = match[2] ?? ''
+  return {
+    tag: match[1] as string,
+    type: /type="([^"]+)"/.exec(attributes)?.[1] ?? null,
+    required: /\brequired(=|\s|$)/.test(attributes),
+  }
+}
+
+/** Every option control sharing one field name, in the order they are drawn. */
+function optionsFor(markup: string, name: string): { type: string; value: string }[] {
+  return [...markup.matchAll(new RegExp(`<input([^>]*name="${name}"[^>]*)>`, 'g'))].map((match) => {
+    const attributes = match[1] ?? ''
+    return {
+      type: /type="([^"]+)"/.exec(attributes)?.[1] ?? '',
+      value: /value="([^"]+)"/.exec(attributes)?.[1] ?? '',
+    }
+  })
+}
+
 async function neverCalled(): Promise<RsvpSubmitResult> {
   throw new Error('the RSVP submit prop was called during a render test')
 }
@@ -57,7 +154,7 @@ function context(overrides: Partial<BlockContext> = {}): BlockContext {
   return {
     schedule: schedule(),
     nowMs: Date.parse('2027-03-12T02:00:00Z'),
-    rsvp: { phase: 'open', submit: neverCalled },
+    rsvp: { phase: 'open', questions: QUESTIONS, submit: neverCalled },
     ...overrides,
   }
 }
@@ -307,50 +404,112 @@ describe('the map', () => {
 })
 
 describe('the RSVP form', () => {
-  it('asks only the questions the template enabled, and always asks the two it cannot skip', () => {
+  it('asks the envelope questions it can never skip, and one control per stored question', () => {
     const markup = render('rsvp')
 
-    expect(markup).toContain('name="guest_name"')
+    // The envelope. Neither is a question: both are columns on `rsvps`.
     expect(markup).toContain('name="attendance"')
-    expect(markup).toContain('name="guest_email"')
-    expect(markup).toContain('name="dietary_notes"')
-    expect(markup).toContain('name="message"')
+    expect(markup).toContain('name="party_size"')
+
+    // One control per question, named by question id, which is what the write
+    // path resolves an answer against.
+    for (const question of QUESTIONS) {
+      expect(markup).toContain(`name="q:${question.id}"`)
+      expect(markup).toContain(question.prompt)
+    }
+
     expect(markup).toContain('Send RSVP')
   })
 
-  it('drops the fields the template disabled', () => {
-    const emailOnly: TemplateBlock = {
+  it('draws each question type as the control that type needs', () => {
+    const markup = render('rsvp')
+
+    // short_answer: a text input
+    expect(controlFor(markup, 'q:name')).toMatchObject({ tag: 'input', type: 'text' })
+    // email: an email input, so a phone offers the right keyboard
+    expect(controlFor(markup, 'q:email')).toMatchObject({ tag: 'input', type: 'email' })
+    // long_answer: a textarea
+    expect(controlFor(markup, 'q:dietary')).toMatchObject({ tag: 'textarea' })
+    // multiple_choice: one radio per option, sharing a name
+    expect(optionsFor(markup, 'q:course')).toEqual([
+      { type: 'radio', value: 'fish' },
+      { type: 'radio', value: 'beef' },
+    ])
+    // checkbox: one checkbox per option, sharing a name
+    expect(optionsFor(markup, 'q:events')).toEqual([
+      { type: 'checkbox', value: 'ceremony' },
+      { type: 'checkbox', value: 'dinner' },
+    ])
+  })
+
+  it('marks only the questions the rows say are required', () => {
+    const markup = render('rsvp')
+
+    expect(controlFor(markup, 'q:name')?.required).toBe(true)
+    expect(controlFor(markup, 'q:dietary')?.required).toBe(false)
+    expect(controlFor(markup, 'q:email')?.required).toBe(false)
+  })
+
+  it('asks nothing at all when the event has no questions, rather than an empty form', () => {
+    const markup = render(
+      'rsvp',
+      context({ rsvp: { phase: 'open', questions: [], submit: neverCalled } })
+    )
+
+    // The envelope still stands: an RSVP that does not say yes or no is not an
+    // RSVP, whatever else the buyer did or did not ask.
+    expect(markup).toContain('name="attendance"')
+    expect(markup).not.toContain('name="q:')
+  })
+
+  it('carries a honeypot no guest can reach', () => {
+    const markup = render('rsvp')
+
+    expect(markup).toContain('name="website"')
+    expect(markup).toContain('aria-hidden="true"')
+    expect(markup).toContain('tabindex="-1"')
+  })
+
+  it('tells a guest what happens to their reply, and links to the statement that says so', () => {
+    const markup = render('rsvp')
+
+    expect(markup).toContain('href="/privacy"')
+  })
+
+  it('drops the party size control when the template turned it off', () => {
+    const noGuestCount: TemplateBlock = {
       id: 'rsvp',
       type: 'rsvp-form',
       config: {
         submitLabel: 'Send RSVP',
         successMessage: 'Thank you.',
         closedMessage: 'RSVPs are closed.',
-        fields: {
-          email: { enabled: true },
-          guestCount: { enabled: false, max: 6 },
-          dietary: { enabled: false },
-          message: { enabled: false },
-        },
+        guestCount: { enabled: false, max: 6 },
       },
     }
 
-    const markup = renderToStaticMarkup(renderBlock(emailOnly, context()))
+    const markup = renderToStaticMarkup(renderBlock(noGuestCount, context()))
 
-    expect(markup).toContain('name="guest_email"')
     expect(markup).not.toContain('name="party_size"')
-    expect(markup).not.toContain('name="dietary_notes"')
-    expect(markup).not.toContain('name="message"')
+    // The questions are rows, so turning off the envelope control changes
+    // nothing about what the event asks.
+    expect(markup).toContain('name="q:name"')
   })
 
   it('serves the closed message during grace, with nothing left to submit', () => {
-    const markup = render('rsvp', context({ rsvp: { phase: 'closed', submit: neverCalled } }))
+    const markup = render(
+      'rsvp',
+      context({ rsvp: { phase: 'closed', questions: QUESTIONS, submit: neverCalled } })
+    )
 
     expect(markup).toContain(
       'RSVPs are closed for this event. Please contact Sarah or Tom directly.'
     )
     expect(markup).not.toContain('<form')
     expect(markup).not.toContain('Send RSVP')
+    // And no question is on screen either: a closed form that still lists what
+    // it would have asked is a form a guest will try to fill in.
+    expect(markup).not.toContain('name="q:')
   })
 
   it('offers a party size only up to the maximum the template set', () => {

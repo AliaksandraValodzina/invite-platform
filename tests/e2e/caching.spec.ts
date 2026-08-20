@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 import { GUEST_PAGE_REVALIDATE_SECONDS } from '@/lib/serving/cache'
+import { signIn } from '../support/auth'
 import { seedGuestEvent } from '../support/events'
 
 /**
@@ -37,6 +38,8 @@ const AGAINST_A_DEPLOYMENT = DEPLOYED_BASE_URL !== undefined
 const IMMUTABLE_MAX_AGE = 31_536_000
 
 let target: string
+/** The buyer's own event, for the half of this file that is about not caching. */
+let dashboard: { path: string; ownerEmail: string } | null = null
 
 test.beforeAll(async ({ baseURL }) => {
   if (AGAINST_A_DEPLOYMENT) {
@@ -50,8 +53,10 @@ test.beforeAll(async ({ baseURL }) => {
     return
   }
 
-  const event = await seedGuestEvent('live')
+  const ownerEmail = `cache-buyer-${Date.now().toString(36)}@example.test`
+  const event = await seedGuestEvent('live', { ownerEmail })
   target = `${baseURL}/e/${event.slug}`
+  dashboard = { path: `/dashboard/${event.eventId}/replies`, ownerEmail }
 })
 
 test.describe('the guest page cache headers', () => {
@@ -192,3 +197,61 @@ function directives(header: string): Map<string, string | null> {
       })
   )
 }
+
+/**
+ * The other half of the same decision.
+ *
+ * The guest page is cached because a link pasted into a group chat is one
+ * origin render rather than a hundred. The dashboard is the same argument run
+ * backwards: it is a list of other people's names, contact details and dietary
+ * requirements, assembled for one signed-in buyer, and there is no version of
+ * "somebody else's copy of it" that is acceptable. A CDN holding it would serve
+ * one buyer's guest list to another; a browser holding it hands it to the next
+ * person to press the back button on a shared laptop.
+ *
+ * So this asserts the absence of the directives the guest page needs. It runs
+ * against a production build for the same reason as everything above it: the
+ * dev server's headers are not the deployment's.
+ */
+test.describe('the dashboard cache headers', () => {
+  test.beforeEach(({ browserName: _browserName }, testInfo) => {
+    test.skip(
+      testInfo.project.name !== 'desktop-chromium',
+      'headers do not vary by viewport, and a second run is a second billed minute'
+    )
+    test.skip(
+      AGAINST_A_DEPLOYMENT,
+      'this seeds a buyer and signs in as them, which needs the service role for the stack ' +
+        'under test. Against a deployment, check it by hand with curl.'
+    )
+    test.skip(
+      !process.env.CI,
+      'the dev server sets different headers from a production build. Run with CI=1 against ' +
+        '`npm run build && npm start`.'
+    )
+  })
+
+  test('a page of guest replies is never stored by anything', async ({ page }) => {
+    if (dashboard === null) throw new Error('no dashboard fixture was seeded')
+
+    await signIn(page, dashboard.ownerEmail)
+    const response = await page.goto(dashboard.path)
+
+    expect(response?.status()).toBe(200)
+
+    const header = response?.headers()['cache-control']
+    expect(header, 'the replies page carries no Cache-Control at all').toBeDefined()
+
+    const parsed = directives(header!)
+
+    // `no-store` covers the browser's own disk, which is the one that matters
+    // on a shared laptop. `private` covers every shared cache in between.
+    expect(parsed.has('no-store')).toBe(true)
+    expect(parsed.has('private')).toBe(true)
+
+    // And none of what the guest page needs. `public` here would be one buyer's
+    // guest list in a CDN, and `s-maxage` would be how long it stayed there.
+    expect(parsed.has('public')).toBe(false)
+    expect(parsed.has('s-maxage')).toBe(false)
+  })
+})

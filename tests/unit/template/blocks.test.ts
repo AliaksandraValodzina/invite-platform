@@ -211,33 +211,32 @@ describe('rsvp-form', () => {
     submitLabel: 'Send RSVP',
     successMessage: 'Thank you.',
     closedMessage: 'RSVPs are closed.',
-    fields: {
-      email: { enabled: true },
-      guestCount: { enabled: true, max: 4 },
-      dietary: { enabled: true },
-      message: { enabled: false },
-    },
+    guestCount: { enabled: true, max: 4 },
   }
 
-  it('accepts the four known questions as toggles', () => {
+  it('carries the words on the form and the one envelope control', () => {
     expect(rsvpFormConfigSchema.parse(valid)).toEqual(valid)
   })
 
-  it('cannot express a custom question, so it cannot become a question builder', () => {
-    // fields is a record of the four known questions, not a list. This is a
-    // scope control and a privacy control at the same time: the format cannot
-    // introduce guest PII that the retention rules on rsvps do not cover.
+  it('cannot express a question at all, because questions are rows', () => {
+    /*
+     * What an event asks lives in `rsvp_questions`, where every question
+     * carries the `pii_class` the retention sweep reads. A document that could
+     * introduce a question could introduce guest personal information that
+     * nothing classified, so the format refuses both the old record of toggles
+     * and any list that looks like a question builder.
+     */
     const asList = rsvpFormConfigSchema.safeParse({
       ...valid,
-      fields: [{ key: 'shoe-size', label: 'Shoe size', type: 'text' }],
+      questions: [{ key: 'shoe-size', label: 'Shoe size', type: 'text' }],
     })
-    const extraQuestion = rsvpFormConfigSchema.safeParse({
+    const asToggles = rsvpFormConfigSchema.safeParse({
       ...valid,
-      fields: { ...valid.fields, shoeSize: { enabled: true } },
+      fields: { email: { enabled: true }, dietary: { enabled: true } },
     })
 
     expect(asList.success).toBe(false)
-    expect(extraQuestion.success).toBe(false)
+    expect(asToggles.success).toBe(false)
   })
 
   it('requires a closed message, because the grace period needs something to say', () => {
@@ -249,7 +248,7 @@ describe('rsvp-form', () => {
     expect(
       rsvpFormConfigSchema.safeParse({
         ...valid,
-        fields: { ...valid.fields, guestCount: { enabled: true, max: 900 } },
+        guestCount: { enabled: true, max: 900 },
       }).success
     ).toBe(false)
   })

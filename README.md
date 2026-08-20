@@ -4,14 +4,20 @@ Interactive invitation websites. See `AGENTS.md` for the product contract and th
 constraints that are binding on every change.
 
 This repo carries the application shell and CI gate, the data model, the
-template definition format, the Open Graph share card, and the guest page: a
-slug at `/e/<slug>` resolves to an event, a template and a published revision,
-and renders through the blocks and themes. There is no auth, no editor and no
-reply path yet. Those are separate tasks.
+template definition format, the Open Graph share card, the guest page and the
+reply path: a slug at `/e/<slug>` resolves to an event, a template and a
+published revision, renders through the blocks and themes, and takes a reply
+that the buyer reads back at `/dashboard`. There is no editor and no redemption
+flow yet. Those are separate tasks.
 
 `docs/serving.md` is the place to start on the guest page: the four serving
 states, the read path, and why the page's cache lifetime is a privacy control
 before it is a speed one.
+
+`docs/replies.md` is the reply path: the envelope-plus-answers model, why a sixth
+question type is an addition rather than a migration, what `pii_class` is for,
+and how the buyer reads and exports what their guests wrote. The platform's
+privacy statement and terms are pages, at `/privacy` and `/terms`.
 
 The template format is the product's file format: three versioned JSON documents,
 five block types, and theme tokens kept out of content. It lives in
@@ -43,19 +49,20 @@ npm run dev           # open /e/<the slug it printed>
 
 ## Commands
 
-| Command                              | What it does                                    |
-| ------------------------------------ | ----------------------------------------------- |
-| `npm run dev`                        | Dev server on http://localhost:3000             |
-| `npm run build`                      | Production build                                |
-| `npm start`                          | Serve the production build                      |
-| `npm run typecheck`                  | Generate Next route types, then `tsc --noEmit`  |
-| `npm run lint`                       | ESLint                                          |
-| `npm run format`                     | Prettier check (`npm run format:write` to fix)  |
-| `npm test`                           | Vitest unit tests                               |
-| `npm run test:e2e`                   | Playwright smoke tests                          |
-| `supabase test db`                   | pgTAP suite over the schema and its policies    |
-| `node scripts/check-anon-access.mjs` | Proves an anonymous client is denied, over HTTP |
-| `node scripts/seed-event.ts`         | Creates an event without a dashboard            |
+| Command                                         | What it does                                                                                                       |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `npm run dev`                                   | Dev server on http://localhost:3000                                                                                |
+| `npm run build`                                 | Production build                                                                                                   |
+| `npm start`                                     | Serve the production build                                                                                         |
+| `npm run typecheck`                             | Generate Next route types, then `tsc --noEmit`                                                                     |
+| `npm run lint`                                  | ESLint                                                                                                             |
+| `npm run format`                                | Prettier check (`npm run format:write` to fix)                                                                     |
+| `npm test`                                      | Vitest unit tests                                                                                                  |
+| `npm run test:e2e`                              | Playwright smoke tests                                                                                             |
+| `supabase test db`                              | pgTAP suite over the schema and its policies                                                                       |
+| `node scripts/check-anon-access.mjs`            | Proves an anonymous client is denied, over HTTP                                                                    |
+| `node scripts/seed-event.ts`                    | Creates an event without a dashboard                                                                               |
+| `node scripts/prove-question-type-addition.mjs` | Performs a sixth RSVP question type against a local database and reads the catalogue to show nothing was rewritten |
 
 `npm run test:e2e` starts its own server: the dev server locally, and the production
 build when `CI` is set. Run `npx playwright install chromium` once before the first
@@ -63,6 +70,11 @@ e2e run. It also needs a local stack up, because the guest page specs seed real
 events and walk all four serving states. The cache header spec refuses to run
 against the dev server on purpose: run it as `CI=1 npm run test:e2e` after a
 build, or point `DEPLOYED_BASE_URL` and `DEPLOYED_EVENT_SLUG` at a deployment.
+
+The reply specs sign a buyer in the way a buyer signs in: the auth admin API
+mints the same one-use hash the email would have carried, and the test opens the
+real `/auth/callback`. No mail service is needed, and nothing about the session
+is faked.
 
 ## Configuration
 
@@ -75,16 +87,26 @@ rather than failing a build that never needed it.
 `.env.example` is the list. Copy it to `.env.local`, which is git ignored, and
 fill it from `supabase status`.
 
-| Variable                    | Required for              | Absent behaviour               |
-| --------------------------- | ------------------------- | ------------------------------ |
-| `NEXT_PUBLIC_SITE_URL`      | canonical and OG URLs     | falls back to `localhost:3000` |
-| `SUPABASE_URL`              | any page that reads a row | throws on the first read       |
-| `SUPABASE_SERVICE_ROLE_KEY` | same                      | same                           |
+| Variable                      | Required for                          | Absent behaviour                       |
+| ----------------------------- | ------------------------------------- | -------------------------------------- |
+| `NEXT_PUBLIC_SITE_URL`        | canonical and OG URLs                 | falls back to `localhost:3000`         |
+| `SUPABASE_URL`                | any page that reads a row             | throws on the first read               |
+| `SUPABASE_SERVICE_ROLE_KEY`   | same                                  | same                                   |
+| `SUPABASE_ANON_KEY`           | signing a buyer in, and the dashboard | throws on the first sign-in            |
+| `NEXT_PUBLIC_DATA_REGION`     | the privacy statement                 | the page says it is not configured yet |
+| `NEXT_PUBLIC_PRIVACY_CONTACT` | the privacy statement and terms       | same                                   |
 
 The service role key is read only by `src/lib/supabase/service.ts`, which is
 marked `server-only`, so a client component importing it fails the build rather
 than shipping the key to a browser. It must never appear in a `NEXT_PUBLIC_`
 variable or in this repo.
+
+The last two are read from the environment rather than committed because
+AGENTS.md forbids a hosted region appearing in this repo, and because a privacy
+statement naming an address nobody reads is worse than one that admits it is not
+configured. `tests/unit/legal/retention.test.ts` asserts both: that no region is
+hardcoded, and that the retention days the page prints are the days the sweep
+actually uses.
 
 ## CI
 

@@ -84,14 +84,20 @@ export type ServiceResponse = {
 
 export type ServiceRequestOptions = {
   /**
-   * Seconds Next may serve this response from its data cache.
+   * Seconds Next may serve this response from its data cache, or `false` for a
+   * read that must see the database as it is right now.
    *
    * It is required rather than defaulted. Next's default is no-store, which
    * makes the calling route dynamic, and a dynamic guest page gives up the edge
    * cache entirely (report section 6.2). Making the caller say a number means
    * nobody gets that by accident.
+   *
+   * `false` is for the write path and nothing else. A guest page may be up to a
+   * minute out of date about whether replies are open, which is a bound this
+   * repo chose deliberately; a request that is about to store somebody's
+   * personal information may not be out of date about it at all.
    */
-  readonly revalidate: number
+  readonly revalidate: number | false
   /** Cache tags, so a publish path can invalidate one event rather than a path. */
   readonly tags?: readonly string[]
 }
@@ -115,12 +121,57 @@ export async function serviceGet(
       Authorization: `Bearer ${config.serviceRoleKey}`,
       Accept: 'application/json',
     },
-    next: {
-      revalidate: options.revalidate,
-      ...(options.tags === undefined ? {} : { tags: [...options.tags] }),
-    },
+    ...(options.revalidate === false
+      ? { cache: 'no-store' as const }
+      : {
+          next: {
+            revalidate: options.revalidate,
+            ...(options.tags === undefined ? {} : { tags: [...options.tags] }),
+          },
+        }),
   })
 
+  return read(response)
+}
+
+/**
+ * One PostgREST POST, with the service role. Never cached, at either layer.
+ *
+ * Writes and reads are separated here rather than folded into one function with
+ * a method argument, because the only interesting thing they share is the
+ * headers and the two have opposite rules about caching. A write that inherited
+ * `revalidate` from a caller in a hurry would be a reply nobody stored.
+ *
+ * Like `serviceGet`, it throws only on a config problem or a dead connection.
+ * PostgREST's own refusals come back as a response, because the route above
+ * turns some of them into designed answers: a slug that stopped being live
+ * between the page rendering and the guest pressing send is a message about the
+ * invitation, not a 500.
+ */
+export async function servicePost(
+  path: string,
+  body: unknown,
+  options: { readonly prefer?: string } = {}
+): Promise<ServiceResponse> {
+  const config = readServiceConfig()
+
+  const response = await fetch(`${config.url}/rest/v1/${path}`, {
+    method: 'POST',
+    headers: {
+      apikey: config.serviceRoleKey,
+      Authorization: `Bearer ${config.serviceRoleKey}`,
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      ...(options.prefer === undefined ? {} : { Prefer: options.prefer }),
+    },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+  })
+
+  return read(response)
+}
+
+async function read(response: Response): Promise<ServiceResponse> {
   const text = await response.text()
   let json: unknown = null
   try {

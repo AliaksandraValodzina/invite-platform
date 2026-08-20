@@ -17,8 +17,8 @@ renders anything: that is the next task.
 | content    | `event_content.content`                  | the buyer's overrides, keyed by block id  |
 
 ```jsonc
-// definition, at version 2 since the hero gained its artwork slot
-{ "version": 2, "blocks": [{ "id": "hero", "type": "hero", "config": { ... } }] }
+// definition, at version 3 since rsvp-form stopped declaring questions
+{ "version": 3, "blocks": [{ "id": "hero", "type": "hero", "config": { ... } }] }
 
 // theme, at version 2 since the type scale gained a font per role
 { "version": 2, "tokens": { "color": {...}, "font": {...}, "typeScale": {...}, "space": {...}, "radius": {...} } }
@@ -56,7 +56,7 @@ noticed.
 
 An override is a shallow, strict partial of the block config, and merging is a
 **top level key replace**. A nested object such as `hero.image` or
-`rsvp-form.fields` is supplied whole or not at all. That is a deliberate refusal
+`rsvp-form.guestCount` is supplied whole or not at all. That is a deliberate refusal
 to write a deep merge: deep merging arrays and optional keys has a dozen
 defensible answers and the wrong one silently produces a page nobody asked for.
 The merged result is then validated against the full block schema, so a half
@@ -155,11 +155,18 @@ The stepped arch aperture the design directions report specifies is a `frame`
 value that has not been built; by the rules below it arrives as a new optional
 field, which is a version bump with no rewrite.
 
-`rsvp-form.fields` is a record of the four known questions, not a list of
-questions. A list is a question builder with extra steps, and a custom RSVP
-question builder is explicitly out of scope for v1. It is also a privacy control:
-the format cannot introduce an RSVP field, so it cannot introduce guest PII that
-the retention rules on `rsvps` do not already cover.
+### `rsvp-form` carries no questions
+
+The rsvp-form config carries the words on the form and one envelope control,
+`guestCount`, and nothing else. What an event asks is rows in `rsvp_questions`
+(`docs/replies.md`), because every question carries the `pii_class` that decides
+what the retention sweep erases.
+
+That is both a scope control and a privacy control, and it is stronger than the
+record of toggles it replaced in version 3. There is one answer to "what does
+this event ask" rather than a document and a table that can disagree, and a
+stored document cannot introduce a question, so it cannot introduce guest
+personal information that nothing classified.
 
 ## How the format changes over time
 
@@ -201,6 +208,15 @@ A migration rewrites `type` on every block of that kind. It touches no ids, so n
 buyer content moves. There is deliberately no alias table: an alias is a second
 mechanism that has to agree with the first one, and the version ladder already
 handles the case an alias would be for.
+
+### Removing a field from a block
+
+The version 3 migration is the worked example: `rsvp-form.fields` went away and
+`fields.guestCount` moved up a level. It is a **rewrite** rather than a version
+bump, because `fields` was required in version 2 and the version 3 schema is
+strict, so a stored document that kept it would stop validating and the resolver
+would omit the block. The rule is the same as for a new required field: the
+migration produces the document that reproduces the old rendering.
 
 ### Removing a block
 

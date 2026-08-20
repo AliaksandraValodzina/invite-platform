@@ -164,20 +164,27 @@ export type MapConfig = z.infer<typeof mapConfigSchema>
 
 // rsvp-form -----------------------------------------------------------------
 
-const fieldToggleSchema = z.strictObject({
-  enabled: z.boolean(),
-  label: optionalText(60),
-})
-
 /**
- * `fields` is a record of the four known questions, not a list of questions.
+ * This config carries the form's words and its one envelope control. It does
+ * not carry the questions, and that is the shape of the whole reply path.
  *
- * A list is a question builder with extra steps, and a custom RSVP question
- * builder is explicitly out of scope for v1. It is also a privacy control: the
- * format cannot introduce an RSVP field, so it cannot introduce guest PII that
- * the retention rules on `rsvps` do not already cover. Attendance is not in the
- * record because it is never optional. An RSVP that does not say yes or no is
- * not an RSVP.
+ * A reply is an envelope plus answers. Attendance and party size are envelope
+ * columns on `rsvps`, because neither is ever optional and because the
+ * headcount query must not depend on which questions an event happens to ask.
+ * Everything a guest writes is a row in `rsvp_questions` answered into
+ * `rsvp_answers`, which is what lets a sixth question type be an addition
+ * rather than a migration (`docs/replies.md`).
+ *
+ * So the questions are not here, and the format is better for it in two ways.
+ * There is one answer to "what does this event ask", the rows, rather than a
+ * document and a table that can disagree. And a stored document cannot
+ * introduce a question, so it cannot introduce guest personal information that
+ * nobody classified: every question carries a `pii_class` and that column is
+ * what the retention sweep reads.
+ *
+ * `guestCount` stays because party size is the envelope, not a question. The
+ * `max` here is the ceiling the buyer offers, and the write path reads it from
+ * this document rather than from the submitted form.
  */
 export const rsvpFormConfigSchema = z.strictObject({
   heading: optionalText(80),
@@ -187,15 +194,10 @@ export const rsvpFormConfigSchema = z.strictObject({
   /** Shown during the grace period, when the page still serves but RSVPs are closed. */
   closedMessage: text(200),
   deadlineNote: optionalText(160),
-  fields: z.strictObject({
-    email: fieldToggleSchema,
-    guestCount: z.strictObject({
-      enabled: z.boolean(),
-      label: optionalText(60),
-      max: z.number().int().min(1).max(20),
-    }),
-    dietary: fieldToggleSchema,
-    message: fieldToggleSchema,
+  guestCount: z.strictObject({
+    enabled: z.boolean(),
+    label: optionalText(60),
+    max: z.number().int().min(1).max(20),
   }),
 })
 

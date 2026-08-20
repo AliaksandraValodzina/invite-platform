@@ -3,40 +3,58 @@
 /**
  * The RSVP form.
  *
- * What it collects, and what happens to each field at expiry, because
- * AGENTS.md says no field goes on this form without that answer:
+ * It draws two different kinds of thing, and the difference is the reply
+ * model rather than a layout decision:
  *
- *   name           rsvps.guest_name      erased at grace + 30 days
- *   attendance     rsvps.attendance      kept, it is not identifying
- *   guest count    rsvps.party_size      kept, it is not identifying
- *   email          rsvps.guest_email     erased at grace + 30 days
- *   dietary notes  rsvps.dietary_notes   erased at grace + 30 days
- *   message        rsvps.message         erased at grace + 30 days
+ *   The envelope. Attendance and party size, which are columns on `rsvps` and
+ *   never questions, because an RSVP that does not say yes or no is not an
+ *   RSVP and because the headcount query must not depend on which questions an
+ *   event happens to ask. Their copy is in this file, not in the format.
  *
- * There is no field here that the format could add, because `fields` is a
- * record of four known questions rather than a list, so this form cannot grow
- * guest PII that the retention rules do not already cover.
+ *   The questions. Rows in `rsvp_questions`, passed in through the block
+ *   context, drawn one control per question in the order the rows give. The
+ *   block config carries none of them.
  *
- * Two things it does not do. It does not decide where an RSVP goes: `submit` is
- * a required prop, so a form that has nowhere to send a reply cannot be
+ * What happens to each answer at expiry, because AGENTS.md says no field goes
+ * on this form without that answer: every question carries a `pii_class`, and
+ * everything not classed `none` is erased 30 days after the event's grace
+ * period ends. That is a property of the row rather than of this component,
+ * which is exactly why the form can grow a question without growing an unswept
+ * corner of the database. `docs/replies.md` has the table.
+ *
+ * Two things it still does not do. It does not decide where a reply goes:
+ * `submit` is a required prop, so a form with nowhere to send a reply cannot be
  * rendered by accident. And it does not draw its own focus rings; the browser's
  * are kept, because there is no focus token and inventing a colour for one is
  * exactly the kind of hardcoded value the block set exists to prevent.
- *
- * Field lengths match the check constraints on `rsvps` so that a guest is told
- * about a limit while they are typing rather than by a rejected submission.
  */
 
 import { useId, useState } from 'react'
 
+import {
+  RSVP_ATTENDANCE_FIELD,
+  RSVP_HONEYPOT_FIELD,
+  RSVP_PARTY_SIZE_FIELD,
+  RSVP_TEXT_LIMITS,
+  rsvpQuestionField,
+  type RsvpQuestion,
+} from '@/lib/rsvp/questions'
 import type { RsvpFormConfig } from '@/lib/template'
 
 import { BlockSection } from './block-section'
 
-export type RsvpSubmitResult =
-  { readonly ok: true } | { readonly ok: false; readonly message: string }
+/** One message about one control, so a guest is told which answer to fix. */
+export type RsvpSubmitIssue = { readonly field: string; readonly message: string }
 
-/** What the block calls when a guest submits. Phase 0.5 wires it to the API route. */
+export type RsvpSubmitResult =
+  | { readonly ok: true }
+  | {
+      readonly ok: false
+      readonly message: string
+      readonly issues?: readonly RsvpSubmitIssue[]
+    }
+
+/** What the block calls when a guest submits. */
 export type RsvpSubmit = (formData: FormData) => Promise<RsvpSubmitResult>
 
 /**
@@ -47,11 +65,9 @@ export type RsvpSubmit = (formData: FormData) => Promise<RsvpSubmitResult>
 export type RsvpPhase = 'open' | 'closed'
 
 /**
- * Copy the format does not carry. Name and attendance are not in `fields`,
- * because neither is optional: an RSVP with no name cannot be matched to an
- * invitation, and one that does not say yes or no is not an RSVP. If a buyer
- * ever needs to reword these, that is a change to the rsvp-form config and a
- * version migration rather than an edit in here.
+ * Copy the format does not carry, because neither field is ever optional and
+ * neither is a question. If a buyer ever needs to reword these it is a change
+ * to the rsvp-form config and a version migration, not an edit in here.
  */
 const NAME_LABEL = 'Your name'
 const ATTENDANCE_LEGEND = 'Can you make it?'
@@ -59,29 +75,48 @@ const ATTENDING_LABEL = "Yes, I'll be there"
 const NOT_ATTENDING_LABEL = "Sorry, I can't make it"
 const GENERIC_FAILURE = 'That did not send. Please check your connection and try again.'
 
+/**
+ * What happens to a reply, said on the form rather than only in a policy.
+ *
+ * A guest never signed up with us, has no account, and is handing over their
+ * name and sometimes their allergies because somebody else asked them to. One
+ * line and a link is the least this can do, and it is on the form because that
+ * is where the decision is being made.
+ */
+const PRIVACY_NOTE = 'Your reply goes to the hosts.'
+const PRIVACY_LINK_LABEL = 'What happens to it'
+
 const CONTROL_CLASS =
   'type-body mt-[var(--space-xs)] w-full rounded-[var(--radius-md)] border border-[color:var(--color-ink-muted)] bg-[var(--color-surface)] p-[var(--space-sm)] text-[color:var(--color-ink)]'
 
 const LABEL_CLASS = 'type-caption block text-[color:var(--color-ink-muted)]'
 
+const ISSUE_CLASS = 'type-caption mt-[var(--space-xs)] text-[color:var(--color-critical)]'
+
 export function RsvpFormBlock({
   blockId,
   config,
   phase,
+  questions,
   submit,
 }: {
   readonly blockId: string
   readonly config: RsvpFormConfig
   readonly phase: RsvpPhase
+  readonly questions: readonly RsvpQuestion[]
   readonly submit: RsvpSubmit
 }) {
   const fieldId = useId()
   const [status, setStatus] = useState<'idle' | 'submitting' | 'submitted' | 'failed'>('idle')
   const [failure, setFailure] = useState(GENERIC_FAILURE)
+  const [issues, setIssues] = useState<readonly RsvpSubmitIssue[]>([])
   const [attending, setAttending] = useState(true)
 
   const headingId = `${blockId}-heading`
-  const fields = config.fields
+
+  function issueFor(field: string): string | undefined {
+    return issues.find((issue) => issue.field === field)?.message
+  }
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -91,13 +126,16 @@ export function RsvpFormBlock({
     try {
       const result = await submit(formData)
       if (result.ok) {
+        setIssues([])
         setStatus('submitted')
         return
       }
       setFailure(result.message)
+      setIssues(result.issues ?? [])
       setStatus('failed')
     } catch {
       setFailure(GENERIC_FAILURE)
+      setIssues([])
       setStatus('failed')
     }
   }
@@ -129,22 +167,25 @@ export function RsvpFormBlock({
         </p>
       ) : (
         <form onSubmit={onSubmit} className="mt-[var(--space-lg)]">
-          <div>
-            <label htmlFor={`${fieldId}-name`} className={LABEL_CLASS}>
-              {NAME_LABEL}
-            </label>
+          {/*
+           * The honeypot. Hidden from everybody a screen can reach and from
+           * anybody a screen reader reads to, so a guest can never fill it, and
+           * left in the tab order's way by nothing: `tabIndex={-1}` and
+           * `aria-hidden` are what make it a trap for a script rather than a
+           * trip hazard for a person.
+           */}
+          <div aria-hidden="true" className="hidden">
+            <label htmlFor={`${fieldId}-${RSVP_HONEYPOT_FIELD}`}>Your website</label>
             <input
-              id={`${fieldId}-name`}
-              name="guest_name"
+              id={`${fieldId}-${RSVP_HONEYPOT_FIELD}`}
+              name={RSVP_HONEYPOT_FIELD}
               type="text"
-              required
-              maxLength={120}
-              autoComplete="name"
-              className={CONTROL_CLASS}
+              tabIndex={-1}
+              autoComplete="off"
             />
           </div>
 
-          <fieldset className="mt-[var(--space-md)]">
+          <fieldset>
             <legend className={LABEL_CLASS}>{ATTENDANCE_LEGEND}</legend>
             {(
               [
@@ -158,7 +199,7 @@ export function RsvpFormBlock({
               >
                 <input
                   type="radio"
-                  name="attendance"
+                  name={RSVP_ATTENDANCE_FIELD}
                   value={choice.value}
                   required
                   defaultChecked={choice.value === 'attending'}
@@ -167,6 +208,7 @@ export function RsvpFormBlock({
                 {choice.label}
               </label>
             ))}
+            <Issue message={issueFor(RSVP_ATTENDANCE_FIELD)} />
           </fieldset>
 
           {/*
@@ -175,18 +217,18 @@ export function RsvpFormBlock({
            * asking a guest who cannot come how many are coming would be asking
            * for a row the database will refuse.
            */}
-          {fields.guestCount.enabled && attending && (
+          {config.guestCount.enabled && attending && (
             <div className="mt-[var(--space-md)]">
               <label htmlFor={`${fieldId}-party`} className={LABEL_CLASS}>
-                {fields.guestCount.label ?? 'How many of you?'}
+                {config.guestCount.label ?? 'How many of you?'}
               </label>
               <select
                 id={`${fieldId}-party`}
-                name="party_size"
+                name={RSVP_PARTY_SIZE_FIELD}
                 defaultValue="1"
                 className={CONTROL_CLASS}
               >
-                {Array.from({ length: fields.guestCount.max }, (_, index) => index + 1).map(
+                {Array.from({ length: config.guestCount.max }, (_, index) => index + 1).map(
                   (count) => (
                     <option key={count} value={count}>
                       {count}
@@ -194,60 +236,31 @@ export function RsvpFormBlock({
                   )
                 )}
               </select>
+              <Issue message={issueFor(RSVP_PARTY_SIZE_FIELD)} />
             </div>
           )}
 
-          {fields.email.enabled && (
-            <div className="mt-[var(--space-md)]">
-              <label htmlFor={`${fieldId}-email`} className={LABEL_CLASS}>
-                {fields.email.label ?? 'Email'}
-              </label>
-              <input
-                id={`${fieldId}-email`}
-                name="guest_email"
-                type="email"
-                maxLength={254}
-                autoComplete="email"
-                className={CONTROL_CLASS}
-              />
-            </div>
-          )}
-
-          {fields.dietary.enabled && (
-            <div className="mt-[var(--space-md)]">
-              <label htmlFor={`${fieldId}-dietary`} className={LABEL_CLASS}>
-                {fields.dietary.label ?? 'Anything we should know about food?'}
-              </label>
-              <textarea
-                id={`${fieldId}-dietary`}
-                name="dietary_notes"
-                rows={2}
-                maxLength={500}
-                className={CONTROL_CLASS}
-              />
-            </div>
-          )}
-
-          {fields.message.enabled && (
-            <div className="mt-[var(--space-md)]">
-              <label htmlFor={`${fieldId}-message`} className={LABEL_CLASS}>
-                {fields.message.label ?? 'A note for us'}
-              </label>
-              <textarea
-                id={`${fieldId}-message`}
-                name="message"
-                rows={3}
-                maxLength={2000}
-                className={CONTROL_CLASS}
-              />
-            </div>
-          )}
+          {questions.map((question) => (
+            <QuestionControl
+              key={question.id}
+              question={question}
+              idPrefix={fieldId}
+              issue={issueFor(rsvpQuestionField(question.id))}
+            />
+          ))}
 
           {config.deadlineNote !== undefined && (
             <p className="type-caption mt-[var(--space-md)] text-[color:var(--color-ink-muted)]">
               {config.deadlineNote}
             </p>
           )}
+
+          <p className="type-caption mt-[var(--space-md)] text-[color:var(--color-ink-muted)]">
+            {PRIVACY_NOTE}{' '}
+            <a href="/privacy" className="underline">
+              {PRIVACY_LINK_LABEL}
+            </a>
+          </p>
 
           {status === 'failed' && (
             <p
@@ -270,4 +283,115 @@ export function RsvpFormBlock({
       )}
     </BlockSection>
   )
+}
+
+function Issue({ message }: { readonly message: string | undefined }) {
+  if (message === undefined) return null
+  return (
+    <p role="alert" className={ISSUE_CLASS}>
+      {message}
+    </p>
+  )
+}
+
+/**
+ * One question, drawn by its shape.
+ *
+ * The switch is exhaustive against the union the question model derives, so a
+ * sixth question type fails the typecheck here rather than rendering nothing at
+ * runtime. That is the same guarantee `renderBlock` gives for block types, for
+ * the same reason: a control that silently does not appear is an answer
+ * silently not collected.
+ */
+function QuestionControl({
+  question,
+  idPrefix,
+  issue,
+}: {
+  readonly question: RsvpQuestion
+  readonly idPrefix: string
+  readonly issue: string | undefined
+}) {
+  const name = rsvpQuestionField(question.id)
+  const id = `${idPrefix}-${question.id}`
+
+  switch (question.type) {
+    case 'multiple_choice':
+    case 'checkbox':
+      return (
+        <fieldset className="mt-[var(--space-md)]">
+          <legend className={LABEL_CLASS}>{question.prompt}</legend>
+          {(question.options ?? []).map((option) => (
+            <label
+              key={option.value}
+              className="type-body mt-[var(--space-xs)] flex items-center gap-[var(--space-sm)]"
+            >
+              <input
+                type={question.type === 'checkbox' ? 'checkbox' : 'radio'}
+                name={name}
+                value={option.value}
+                required={question.type === 'multiple_choice' && question.required}
+              />
+              {option.label}
+            </label>
+          ))}
+          <Issue message={issue} />
+        </fieldset>
+      )
+
+    case 'long_answer':
+      return (
+        <div className="mt-[var(--space-md)]">
+          <label htmlFor={id} className={LABEL_CLASS}>
+            {question.prompt}
+          </label>
+          <textarea
+            id={id}
+            name={name}
+            rows={3}
+            required={question.required}
+            maxLength={RSVP_TEXT_LIMITS.long_answer}
+            className={CONTROL_CLASS}
+          />
+          <Issue message={issue} />
+        </div>
+      )
+
+    case 'short_answer':
+    case 'email':
+      return (
+        <div className="mt-[var(--space-md)]">
+          <label htmlFor={id} className={LABEL_CLASS}>
+            {question.prompt}
+          </label>
+          <input
+            id={id}
+            name={name}
+            type={question.type === 'email' ? 'email' : 'text'}
+            required={question.required}
+            maxLength={RSVP_TEXT_LIMITS[question.type]}
+            /*
+             * The one place the form guesses at meaning. The name question is
+             * the field a browser should offer to fill, and getting that wrong
+             * on a phone costs a guest real typing. It is matched on the prompt
+             * because a question is a row now, and there is no other marker to
+             * match on until one is worth adding.
+             */
+            autoComplete={
+              question.type === 'email' ? 'email' : question.prompt === NAME_LABEL ? 'name' : 'off'
+            }
+            className={CONTROL_CLASS}
+          />
+          <Issue message={issue} />
+        </div>
+      )
+
+    default: {
+      // A question type with no control is a typecheck failure, not a question
+      // that quietly disappears from the form. The write path makes the same
+      // refusal at runtime for a database that is newer than this deploy.
+      const unhandled: never = question.type
+      return unhandled
+    }
+  }
 }

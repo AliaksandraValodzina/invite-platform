@@ -10,11 +10,16 @@
  * second copy of the same inserts.
  *
  * It writes through PostgREST with the service role and through the auth admin
- * API, which is how the product itself reaches the database. It deliberately
- * imports nothing from `src/`: Node runs a `.ts` file directly by stripping the
- * types, and the app's modules are written for a bundler that resolves
- * extensionless imports, so importing them here would need a build step to run
- * one script.
+ * API, which is how the product itself reaches the database.
+ *
+ * It imports one module from `src/`, and only one: `src/lib/rsvp/questions.ts`,
+ * which is a leaf with no imports of its own, named with its extension so Node
+ * can run this file by stripping types. Everything else in `src/` is written
+ * for a bundler that resolves extensionless imports and would need a build step
+ * to reach from here. The exception is worth making because the alternative is
+ * a second copy of the default question set, and the first thing that would
+ * drift between the two copies is a `pii_class`, which decides what the
+ * retention sweep erases.
  *
  * Usage, with a local stack up (`supabase start`):
  *
@@ -28,6 +33,8 @@
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+
+import { defaultQuestionRows } from '../src/lib/rsvp/questions.ts'
 
 /**
  * The four states `public.event_state_at` can return, expressed as the row that
@@ -210,6 +217,16 @@ export type SeedEventInput = {
   /** Distinguishes template rows when several are seeded for one owner. */
   readonly templateKey?: string | undefined
   /**
+   * The RSVP questions this event asks. Defaults to the standard set.
+   *
+   * Rows, not config: what an event asks lives in `rsvp_questions`, and each
+   * question carries the `pii_class` that decides what the retention sweep
+   * erases. A test that needs a choice question, or one already retired, passes
+   * it here. `owner_id` and `event_id` are attached by this script, so a row
+   * here is the question and nothing about whose it is.
+   */
+  readonly questions?: Record<string, unknown>[] | undefined
+  /**
    * Whether the content revision is the published one. Defaults to true.
    *
    * False produces a real and reachable hazard rather than a test contrivance:
@@ -289,6 +306,29 @@ export async function seedEvent(
     })
   )
   const eventId = event.id as string
+
+  /*
+   * The question set. An event with no questions renders a form that asks only
+   * whether you are coming, which is not the product, so this is part of
+   * creating an event rather than a separate step. The redemption flow in a
+   * later stage writes the same rows from the same list.
+   */
+  await call(config, '/rest/v1/rsvp_questions', {
+    method: 'POST',
+    prefer: 'return=minimal',
+    body:
+      input.questions === undefined
+        ? defaultQuestionRows(eventId, ownerId)
+        : // Identity is attached here rather than asked for, the same way the
+          // database attaches it: `set_owner_from_event` overwrites whatever
+          // owner a caller sends. A fixture describes a question; it does not
+          // get to say whose it is.
+          input.questions.map((question) => ({
+            ...question,
+            owner_id: ownerId,
+            event_id: eventId,
+          })),
+  })
 
   const content = input.content ?? { version: 1, blocks: {} }
   await call(config, '/rest/v1/event_content', {

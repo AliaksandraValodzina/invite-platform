@@ -9,6 +9,10 @@
     "skipLibCheck": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
+    // scripts/seed-event.ts is run directly by Node, which strips types and needs
+    // the extension to resolve. It reaches one leaf module in src/ so that the
+    // default RSVP question set has one definition and not two.
+    "allowImportingTsExtensions": true,
     "isolatedModules": true,
     "incremental": true,
     "noEmit": true,

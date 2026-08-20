@@ -15,6 +15,7 @@
 import { Fragment, type ReactElement } from 'react'
 
 import type { ResolvedSchedule } from '@/lib/event/time'
+import type { RsvpQuestion } from '@/lib/rsvp/questions'
 import type { TemplateBlock } from '@/lib/template'
 
 import { CountdownBlock } from './countdown-block'
@@ -32,6 +33,7 @@ export {
   RsvpFormBlock,
   type RsvpPhase,
   type RsvpSubmit,
+  type RsvpSubmitIssue,
   type RsvpSubmitResult,
 } from './rsvp-form-block'
 
@@ -42,6 +44,14 @@ export type BlockContext = {
   readonly nowMs: number
   readonly rsvp: {
     readonly phase: RsvpPhase
+    /**
+     * The event's live questions, read on the same request as the event itself
+     * (src/lib/supabase/events.ts). They arrive through the context rather than
+     * through the block config because they are rows: what an event asks is a
+     * question set with a PII class per question, not a document a template
+     * carries.
+     */
+    readonly questions: readonly RsvpQuestion[]
     readonly submit: RsvpSubmit
   }
 }
@@ -69,6 +79,7 @@ export function renderBlock(block: TemplateBlock, context: BlockContext): ReactE
           blockId={block.id}
           config={block.config}
           phase={context.rsvp.phase}
+          questions={context.rsvp.questions}
           submit={context.rsvp.submit}
         />
       )

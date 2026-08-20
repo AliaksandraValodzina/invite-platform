@@ -1,4 +1,10 @@
-import { seedEvent, type SeedState, type SeededEvent } from '../../scripts/seed-event'
+import {
+  DEFAULT_OWNER_EMAIL,
+  seedEvent,
+  type SeedState,
+  type SeededEvent,
+} from '../../scripts/seed-event'
+import { DEFAULT_RSVP_QUESTIONS } from '../../src/lib/rsvp/questions.ts'
 
 /**
  * The fixtures the browser suite opens, seeded through the same script the
@@ -50,9 +56,28 @@ export const GUEST_CONTENT = {
   },
 }
 
+/**
+ * The prompts the seeded events ask, so a test can find a control by its label
+ * without repeating the copy.
+ *
+ * Read from the default question set rather than written out again: the form is
+ * rendered from rows created from that list, and a test that carried its own
+ * copy of the prompts would keep passing after somebody changed one.
+ */
+export const GUEST_QUESTION_PROMPTS = Object.fromEntries(
+  DEFAULT_RSVP_QUESTIONS.map((question) => [question.key, question.prompt])
+) as Record<string, string>
+
+/** A buyer with a real auth user, which every seeded event belongs to. */
+export const GUEST_OWNER_EMAIL = DEFAULT_OWNER_EMAIL
+
 export async function seedGuestEvent(
   state: SeedState,
-  options: { readonly publishContent?: boolean } = {}
+  options: {
+    readonly publishContent?: boolean
+    readonly ownerEmail?: string
+    readonly questions?: Record<string, unknown>[]
+  } = {}
 ): Promise<SeededEvent> {
   return seedEvent({
     title: GUEST_TITLE,
@@ -63,6 +88,8 @@ export async function seedGuestEvent(
     state,
     content: GUEST_CONTENT,
     ...(options.publishContent === undefined ? {} : { publishContent: options.publishContent }),
+    ...(options.ownerEmail === undefined ? {} : { ownerEmail: options.ownerEmail }),
+    ...(options.questions === undefined ? {} : { questions: options.questions }),
   })
 }
 

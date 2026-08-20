@@ -1,7 +1,8 @@
 # Data model
 
-Phase 0.2. Six tables, RLS from the first migration, and the four decisions that
-are expensive to change once real events exist.
+Six tables from Phase 0.2, three more from stage 2, RLS from the first
+migration, and the decisions that are expensive to change once real events
+exist.
 
 Migrations live in `supabase/migrations/` and are applied by the Supabase CLI.
 Schema is never edited in the dashboard: a dashboard edit is a change nobody can
@@ -15,10 +16,22 @@ auth.users
    |      |
    +-- events              activated instance, owns the public slug
           |
-          +-- event_content   revisions, one published at a time
-          +-- rsvps           guests PII
+          +-- event_content    revisions, one published at a time
+          +-- rsvp_questions   what this event asks
+          +-- rsvps            the envelope of one reply
+          |     |
+          |     +-- rsvp_answers   what one guest said, guests PII
           +-- activation_codes.redeemed_event_id
+
+platform.retention_runs    one row per retention sweep, no tenant
 ```
+
+`platform` is a schema of its own, and that is a decision rather than tidiness.
+Every table in `public` carries `owner_id` and belongs to a tenant, which
+`01_tenancy.test.sql` asserts over the catalogue rather than over a list of
+names. A sweep belongs to nobody, so giving it a nullable owner to satisfy the
+shape would weaken the invariant for every other table. The schema is not in the
+Data API's exposed list, so it has no HTTP surface at all.
 
 ## Tenancy
 
@@ -77,6 +90,8 @@ single-tenant product finds out about in production.
 | `events`           | nothing | full                                                   | all            |
 | `event_content`    | nothing | full                                                   | all            |
 | `rsvps`            | nothing | select, delete                                         | all            |
+| `rsvp_questions`   | nothing | select, insert, update. **No delete**                  | all            |
+| `rsvp_answers`     | nothing | select, delete                                         | all            |
 | `activation_codes` | nothing | select, insert, update as issuer                       | all            |
 
 Two of those need saying out loud.
@@ -87,11 +102,16 @@ from any role other than the service role even if a future migration hands the
 privilege back. Self-service role escalation is the classic hole in a table
 shaped like this.
 
-`rsvps` gives the buyer `select` and `delete` but no `insert` or `update`, at
-both the privilege and the policy layer. RSVPs arrive through an API route with
-the service role. Delete exists so an erasure request can be honoured. A buyer
-editing what a guest wrote about their own allergies is not a feature anyone
-asked for.
+`rsvps` and `rsvp_answers` give the buyer `select` and `delete` but no `insert`
+or `update`, at both the privilege and the policy layer. Replies arrive through
+an API route with the service role. Delete exists so an erasure request can be
+honoured. A buyer editing what a guest wrote about their own allergies is not a
+feature anyone asked for.
+
+`rsvp_questions` gives the buyer no `delete` at all. Removing a question is
+`retired_at`, because `rsvp_answers` references it `ON DELETE RESTRICT` and a
+buyer tidying their form must never destroy replies somebody already gave. The
+privilege system is what makes that true rather than a habit.
 
 ## Slugs
 
@@ -185,21 +205,42 @@ Grace exists so that a link already shared into a chat does not break mid-event
 because a renewal email went to spam. RSVPs close at `hosting_expires_at`
 because collecting new guest PII against a lapsed account is not defensible.
 
+## Replies
+
+A reply is an envelope plus answers: `rsvps` holds attendance and party size,
+which are never questions, and `rsvp_answers` holds what the guest wrote, one
+row per question. What an event asks is rows in `rsvp_questions`, not template
+config, and every question carries a `pii_class`.
+
+The full design, and why a sixth question type is an addition rather than a
+migration, is in `docs/replies.md`. Two properties belong here because they are
+schema guarantees rather than product ones:
+
+- **An answer snapshots its question.** `question_prompt`, `question_type` and
+  `pii_class` are copied onto the answer at answer time, by the database, from
+  the question row. A trigger refuses any later change to an answer except
+  erasure. Rewording a question does not rewrite what anybody was asked.
+- **Value columns are typed by shape** (`text`, `choice`, `number`) rather than by
+  question type, which is what lets a new type land as an enum value and a
+  branch. `scripts/prove-question-type-addition.mjs` performs that migration
+  against a database holding answers and reads the catalogue to show nothing was
+  rewritten.
+
 ## RSVP retention
 
-RSVP rows are other people's personal information, and none of those people are
+Reply rows are other people's personal information, and none of those people are
 our customer. Dietary notes are the sharp edge: "coeliac", "nut allergy", "no
 pork" are health information and, read together, religious information.
 
 **The rule.** A guest's identity leaves our database 30 days after the buyer's
 grace period ends. The event itself is deleted a year after that.
 
-| When                       | What happens                                                                                      | What survives                                        |
-| -------------------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| `grace_ends_at + 30 days`  | **Tier 1.** `guest_name`, `guest_email`, `dietary_notes`, `message` erased; `pii_redacted_at` set | `attendance`, `party_size`, `created_at`, `event_id` |
-| `grace_ends_at + 365 days` | **Tier 2.** Event row deleted                                                                     | nothing; content revisions and RSVP rows cascade     |
-| on request                 | guest erasure: `public.erase_rsvp(id)`, hard delete                                               | nothing                                              |
-| on request                 | buyer account deletion: `on delete cascade` from `auth.users`                                     | nothing                                              |
+| When                       | What happens                                                                              | What survives                                                                    |
+| -------------------------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `grace_ends_at + 30 days`  | **Tier 1.** Every answer whose `pii_class` is not `none` is erased; `pii_redacted_at` set | `attendance`, `party_size`, `created_at`, `event_id`, and answers classed `none` |
+| `grace_ends_at + 365 days` | **Tier 2.** Event row deleted                                                             | nothing; content revisions and RSVP rows cascade                                 |
+| on request                 | guest erasure: `public.erase_rsvp(id)`, hard delete                                       | nothing                                                                          |
+| on request                 | buyer account deletion: `on delete cascade` from `auth.users`                             | nothing                                                                          |
 
 **Why redact and not delete at tier 1.** Deleting outright is the cleaner privacy
 answer, but it destroys the buyer's record of their own event while they may
@@ -210,11 +251,21 @@ Thirty days after the page stops serving is late enough that an export is
 realistic and early enough that we are not sitting on a list of allergies for a
 year.
 
-**Redaction means something the database enforces.** A check constraint says a
-row either has `pii_redacted_at` null and a `guest_name`, or has
-`pii_redacted_at` set and every identifying column null. A half-redacted row
-cannot exist, so a sweep that half-worked fails loudly instead of leaving
-plausible-looking rows behind.
+**The sweep reads one enum column and never a prompt.** That is what `pii_class`
+is for, and it is why the question set can grow without growing an unswept
+corner of the database. An answer the buyer classed as being about nobody, such
+as a menu choice, survives redaction, which is how a caterer's count outlives the
+guest list.
+
+**Redaction means something the database enforces.** A check constraint says an
+answer either has `pii_redacted_at` null, or is classed `none`, or has every
+value column null. A half-redacted row cannot exist, so a sweep that half-worked
+fails loudly instead of leaving plausible-looking rows behind. A trigger also
+refuses to add personal information to a reply already marked redacted.
+
+**The sweep records that it ran** in `platform.retention_runs`. A sweep failing
+since March looks exactly like a sweep with nothing to do; that row is what tells
+them apart.
 
 **Deliberately not collected**: IP address, user agent, device or referrer
 fingerprint. Rate limiting on the RSVP endpoint belongs in the API route and does
@@ -223,9 +274,11 @@ them later means answering the retention question for them first, which is the
 rule the whole table is built around: no field goes onto the RSVP form without a
 stated fate at expiry.
 
-**Field lengths are a privacy control**, not only validation. `message` is capped
-at 2000 characters and `dietary_notes` at 500, which caps how much free text a
-stranger can store about themselves on our disk.
+**Lengths and counts are a privacy control**, not only validation. An answer is
+capped at 2000 characters, a prompt at 200, and an event at twelve live
+questions. The last one is the ceiling that has to exist before the authoring
+surface does: an extensible question set with no limit is an unbounded personal
+data surface.
 
 **`activation_codes.order_reference`** is the Etsy order id. It is buyer data
 rather than guest data, retained for the accounting period rather than this
@@ -310,8 +363,11 @@ Redemption is all-or-nothing, enforced by a constraint: a row with status
 Two suites, because they prove different things.
 
 `supabase/tests/*.test.sql` are pgTAP, run by `supabase test db`. They cover
-constraints, triggers, derived time, slug behaviour, the retention sweeps, and
-that RLS is enabled and forced on every table.
+constraints, triggers, derived time, slug behaviour, the reply model, the write
+function, the retention sweeps, and that RLS is enabled and forced on every
+table. The assertions about the reply model are written as attempts to break the
+rule, because a test that only exercises the happy path passes against a table
+with the constraint dropped.
 
 `scripts/check-anon-access.mjs` is the one that matters most. It drives real
 HTTP clients (anonymous, and a signed-in non-owner) against a running stack
