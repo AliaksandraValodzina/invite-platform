@@ -331,10 +331,20 @@ select is(
   'nothing has recorded a run yet: the calls above went to the tiers directly'
 );
 
+-- Every key, not a subset. The comparison is over the whole object minus the
+-- clock, so a step added to the sweep that forgets to report itself fails here
+-- rather than passing quietly.
 select is(
   public.run_retention_sweep('2030-01-01T03:17:00Z'::timestamptz) - 'ran_at',
-  jsonb_build_object('rsvps_redacted', 1, 'rsvp_answers_redacted', 4, 'events_purged', 3),
-  'the whole sweep runs both tiers and reports what each did'
+  jsonb_build_object(
+    'rsvps_redacted', 1,
+    'rsvp_answers_redacted', 4,
+    'events_purged', 3,
+    'upload_originals_discarded', 0,
+    'upload_derivatives_discarded', 0,
+    'objects_awaiting_deletion', 0
+  ),
+  'the whole sweep runs every tier and reports what each did'
 );
 
 select is(

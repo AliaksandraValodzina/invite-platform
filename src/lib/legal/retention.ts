@@ -20,6 +20,25 @@ export const REDACTION_DAYS = 30
 /** Days after grace ends that the event and everything under it is deleted. */
 export const PURGE_DAYS = 365
 
+/**
+ * Days after publication that a buyer's ORIGINAL upload is discarded.
+ * 20260821010400_uploads_retention.sql, public.upload_original_retention_days.
+ *
+ * What a guest is served outlives this: the derivatives are kept for the whole
+ * hosting term. This is only the file the buyer sent, kept so they can re-crop
+ * without uploading again, and discarding it is what keeps steady state storage
+ * from growing with every event ever sold.
+ */
+export const UPLOAD_ORIGINAL_RETENTION_DAYS = 30
+
+/**
+ * Working days we promise to answer a takedown in.
+ *
+ * A number rather than prose because a promise about a response time is the
+ * kind of thing that quietly becomes two different numbers on two pages.
+ */
+export const TAKEDOWN_RESPONSE_WORKING_DAYS = 5
+
 /** When the sweep runs, UTC. 20260819010900_schedule_retention.sql. */
 export const SWEEP_TIME_UTC = '03:17'
 

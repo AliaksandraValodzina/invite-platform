@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 import { GUEST_PAGE_REVALIDATE_SECONDS } from '@/lib/serving/cache'
+import { ASSET_PATH_PREFIX } from '@/lib/uploads'
 import { signIn } from '../support/auth'
 import { seedGuestEvent } from '../support/events'
 
@@ -171,19 +172,26 @@ test.describe('the guest page cache headers', () => {
 })
 
 /**
- * What counts as content addressed today.
+ * What counts as content addressed.
  *
  * Everything under `/_next/static/` carries a build hash in its filename, so an
- * edit produces a different URL and there is never anything to invalidate. That
- * is the same property buyer uploads will have when they arrive, and when they
- * do they join this assertion rather than getting one of their own.
+ * edit produces a different URL and there is never anything to invalidate.
+ * Buyer uploads under `ASSET_PATH_PREFIX` have the same property for a stronger
+ * reason: the key IS the sha256 of the bytes at it. They join this assertion
+ * rather than getting one of their own, which is what this comment promised
+ * before they existed.
+ *
+ * An event seeded here carries no upload, so the assertions above are satisfied
+ * by the build assets. The walk that puts a real uploaded asset on a real page
+ * and reads `transferSize` off a reload is `uploads.spec.ts`, because it needs
+ * a signed-in buyer to create one.
  */
 function isContentAddressed(url: string): boolean {
   return isContentAddressedName(url)
 }
 
 function isContentAddressedName(name: string): boolean {
-  return name.includes('/_next/static/')
+  return name.includes('/_next/static/') || name.includes(ASSET_PATH_PREFIX)
 }
 
 function directives(header: string): Map<string, string | null> {
