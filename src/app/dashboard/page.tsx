@@ -76,6 +76,9 @@ export default async function DashboardPage() {
             </p>
 
             <p className="mt-2 flex gap-4 text-sm">
+              <Link href={`/dashboard/${event.id}/edit`} className="underline">
+                Edit
+              </Link>
               <Link href={`/dashboard/${event.id}/replies`} className="underline">
                 Read the replies
               </Link>

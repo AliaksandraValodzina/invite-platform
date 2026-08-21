@@ -42,6 +42,7 @@
 import { Fragment } from 'react'
 
 import type { HeroConfig } from '@/lib/template'
+import { readAssetHostConfig, resolveAssetSrc } from '@/lib/uploads/host'
 
 import { BlockSection } from './block-section'
 
@@ -88,23 +89,30 @@ export function HeroBlock({
   readonly config: HeroConfig
 }) {
   const lines = stackNames(config.headline)
+  const host = readAssetHostConfig()
 
   return (
     <BlockSection
       blockId={blockId}
       className="text-center"
-      bleed={config.artwork === undefined ? undefined : <HeroArtwork src={config.artwork.src} />}
+      bleed={config.artwork === undefined ? undefined : <HeroArtwork artwork={config.artwork} />}
     >
       {config.image !== undefined && (
         /*
          * A plain img rather than next/image. next/image needs either a host
-         * allowlist or stored dimensions, and the format has neither yet: an
-         * image src is any https URL, and there is nowhere to put a width and a
-         * height. Both arrive with buyer uploads. See docs/blocks.md.
+         * allowlist or stored dimensions, and the format has neither: a picture
+         * names a source and its stored widths, and there is nowhere to put a
+         * height. See docs/blocks.md.
+         *
+         * The address is resolved and every stored width offered, the same way
+         * the envelope does it and for the same reasons: content names an
+         * upload as `/a/<key>` and never a hostname, and a photograph that was
+         * re-encoded to three widths should not send the largest to a phone.
          */
         // eslint-disable-next-line @next/next/no-img-element
         <img
-          src={config.image.src}
+          src={resolveAssetSrc(config.image.src, host)}
+          {...srcSetOf(config.image, host)}
           alt={config.image.alt}
           fetchPriority="high"
           decoding="async"
@@ -161,7 +169,9 @@ export function HeroBlock({
  * The wrapper carries no styles. It exists so the reveal animation has an
  * element to clip and transform without reaching into this block.
  */
-function HeroArtwork({ src }: { readonly src: string }) {
+function HeroArtwork({ artwork }: { readonly artwork: NonNullable<HeroConfig['artwork']> }) {
+  const host = readAssetHostConfig()
+
   return (
     <div data-hero-artwork="">
       {/*
@@ -173,7 +183,8 @@ function HeroArtwork({ src }: { readonly src: string }) {
        */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src={src}
+        src={resolveAssetSrc(artwork.src, host)}
+        {...srcSetOf(artwork, host)}
         alt=""
         aria-hidden="true"
         loading="lazy"
@@ -183,4 +194,30 @@ function HeroArtwork({ src }: { readonly src: string }) {
       />
     </div>
   )
+}
+
+/**
+ * The `srcset` attribute for a picture, or nothing at all.
+ *
+ * Spread rather than returned as a string, so a picture with one width emits no
+ * attribute instead of an empty one: a srcset offering the browser the file it
+ * already has in `src` is bytes in the document that decide nothing.
+ *
+ * There is deliberately no `sizes`, for the reason the envelope has none: a
+ * `sizes` value is a CSS length written into a component, which the block token
+ * rule forbids, and the default it would replace is `100vw`, which on the phone
+ * these widths exist for is very nearly true.
+ */
+function srcSetOf(
+  picture: {
+    readonly widths?: readonly { readonly src: string; readonly width: number }[] | undefined
+  },
+  host: ReturnType<typeof readAssetHostConfig>
+): { srcSet?: string } {
+  if (picture.widths === undefined) return {}
+  return {
+    srcSet: picture.widths
+      .map((candidate) => `${resolveAssetSrc(candidate.src, host)} ${candidate.width}w`)
+      .join(', '),
+  }
 }

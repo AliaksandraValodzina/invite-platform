@@ -27,7 +27,7 @@ import { envelopeConfigSchema, type EnvelopeConfig } from './envelope'
 import { slugSchema } from './primitives'
 
 /** Bumped when the shape of a block config, or the block list itself, changes. */
-export const CURRENT_DEFINITION_VERSION = 4
+export const CURRENT_DEFINITION_VERSION = 5
 
 /**
  * The ladder. The runner asserts this list has exactly
@@ -112,6 +112,33 @@ export const DEFINITION_MIGRATIONS: readonly DocumentMigration[] = [
      * the envelope" with a query rather than with a guess.
      */
     migrate: (document) => ({ ...document, version: 4 }),
+  },
+  {
+    from: 4,
+    to: 5,
+    description: 'every picture in the format is one shape, and may name an upload',
+    /*
+     * Nothing to rewrite, and the reason is worth stating because it is the
+     * cheap half of a change that looks expensive.
+     *
+     * Version 5 does two things to `hero.image`: it widens `src` from an https
+     * URL to the same `imageSourceSchema` `hero.artwork` and the envelope
+     * already used, and it adds an optional `widths` list. Both directions are
+     * WIDENING, so every version 4 document satisfies the version 5 schema
+     * exactly as it was stored, and a hero photo that named an https URL still
+     * names one.
+     *
+     * The number still moves, and here it earns it more than usual. A version 5
+     * document may contain `"src": "/a/<key>"` in a field that version 4 code
+     * would reject, so `templates.definition_version` is what tells a rollback
+     * that it is looking at a document it does not understand, and
+     * `load` answers `newer-than-supported` rather than guessing.
+     *
+     * Why widen at all: the one picture field a buyer most wants to fill from
+     * the phone in their hand, the photograph of the two of them, was the one
+     * field the upload capability could not reach. See docs/editing.md.
+     */
+    migrate: (document) => ({ ...document, version: 5 }),
   },
 ]
 

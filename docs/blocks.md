@@ -196,9 +196,13 @@ here so the next task does not rediscover it.
   a designed focus state, that is a new role.
 - **No hero image dimensions.** The hero image and the artwork band are plain
   `img` elements. `next/image` needs either a host allowlist or stored
-  dimensions and the format has neither: a src is an https URL or an app served
-  path, and there is nowhere to put a width and a height. Both arrive with buyer
-  uploads, and until then either picture can shift layout as it loads.
+  dimensions, and the format has the first half of the second: a picture names
+  every stored WIDTH, which is what a `srcset` needs, and no height, which is
+  what layout stability needs. Either picture can still shift layout as it
+  loads. What the widths do buy is that a phone is not sent the file a laptop
+  needs: the hero resolves both its pictures through `resolveAssetSrc` and emits
+  a `srcset` from `widths`, exactly as the envelope does, and there is no `sizes`
+  attribute for the reason there is none there either.
 - **No crop, focal point or aspect ratio on the artwork.** The band is the shape
   of the file. A ratio chosen here would be a ratio every future piece of
   artwork had to agree with, and there is nowhere in the format to record which

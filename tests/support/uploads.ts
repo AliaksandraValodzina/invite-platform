@@ -12,11 +12,12 @@ import sharp from 'sharp'
  * unit tests: the limits are only worth something if they hold on the wire,
  * against a request that did not come from our own code.
  *
- * Putting an uploaded asset ONTO a page is not done here. There is no buyer
- * editing surface yet, and writing a content revision after an event exists
- * races the guest page's own cache lifetime, which is a bound this repo chose
- * deliberately. A spec that needs an asset on a page seeds the event with the
- * asset already named: `seedGuestEvent` takes content for exactly that.
+ * Putting an uploaded asset ONTO a page is not done here. There are two ways to
+ * do that and both live elsewhere. A spec whose subject is the page seeds the
+ * event with the asset already named, because `seedGuestEvent` takes content
+ * for exactly that and a page that is right on its FIRST render is not racing
+ * the guest page cache. A spec whose subject is the buyer doing it drives the
+ * editor, which is `tests/e2e/editing.spec.ts`.
  */
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url))

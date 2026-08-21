@@ -5,10 +5,17 @@ constraints that are binding on every change.
 
 This repo carries the application shell and CI gate, the data model, the
 template definition format, the Open Graph share card, the guest page and the
-reply path, and the upload capability: a slug at `/e/<slug>` resolves to an
-event, a template and a published revision, renders through the blocks and
-themes, and takes a reply that the buyer reads back at `/dashboard`. There is no
-editor and no redemption flow yet. Those are separate tasks.
+reply path, the upload capability, and the guided form a buyer fills in: a slug
+at `/e/<slug>` resolves to an event, a template and a published revision, renders
+through the blocks and themes, and takes a reply that the buyer reads back at
+`/dashboard`. There is no redemption flow yet, and sections cannot be added,
+removed or moved. Those are separate tasks.
+
+`docs/editing.md` is the buyer's side: `/dashboard/<id>/edit`, where the names,
+the date, the venue, the words, the photographs and the reply form are filled in.
+Its form is generated from the block schemas rather than written per block type,
+so a block added later gets an editable form with nobody touching the editor,
+and a save writes only what differs from the template.
 
 `docs/serving.md` is the place to start on the guest page: the four serving
 states, the read path, and why the page's cache lifetime is a privacy control

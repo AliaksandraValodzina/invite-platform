@@ -202,7 +202,7 @@ describe('the universal envelope', () => {
 /**
  * A picture as the upload capability actually produces one: two content
  * addressed WebP files, named as `/a/<key>` with no hostname in the document.
- * `tests/unit/uploads/envelope.test.ts` is where this shape is built from a
+ * `tests/unit/uploads/picture.test.ts` is where this shape is built from a
  * real upload; here it is what the cover has to draw.
  */
 const UPLOADED_ENVELOPE = {

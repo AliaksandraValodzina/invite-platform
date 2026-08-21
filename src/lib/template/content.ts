@@ -64,8 +64,8 @@ export const eventContentSchema = z.strictObject({
    * It is a sibling of `blocks` and not a key inside it because the envelope is
    * not a block and has no block id to be keyed by. This is also where a buyer
    * supplied envelope picture lands, as `{ "envelope": { "image": ... } }`,
-   * built from an `envelope` kind upload by `envelopeImageFromUpload` in
-   * src/lib/uploads/envelope.ts. See docs/envelope.md.
+   * built from an `envelope` kind upload by `pictureFromUpload` in
+   * src/lib/uploads/picture.ts. See docs/envelope.md.
    */
   envelope: overrideRecordSchema.optional(),
 })

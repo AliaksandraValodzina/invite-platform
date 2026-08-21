@@ -58,6 +58,7 @@ export {
 
 export {
   createDocumentPipeline,
+  toIssues,
   type DocumentIssue,
   type DocumentMigration,
   type DocumentPipeline,

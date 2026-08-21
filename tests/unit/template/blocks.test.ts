@@ -56,12 +56,54 @@ describe('hero', () => {
   it.each([
     ['javascript:alert(1)', 'must use https, got "javascript:"'],
     ['http://cdn.example.com/a.jpg', 'must use https, got "http:"'],
-    ['/uploads/a.jpg', 'must be an absolute URL'],
+    ['//evil.example.com/a.jpg', 'must not start with "//", which a browser reads as another host'],
+    ['/a/../../etc/passwd.png', 'must not contain a ".." segment'],
   ])('rejects the image src %s', (src, expectedMessage) => {
     const result = heroConfigSchema.safeParse({ ...valid, image: { src, alt: 'A photo' } })
 
     expect(result.success).toBe(false)
     expect(messagesFrom(result)).toContain(expectedMessage)
+  })
+
+  /*
+   * Version 5 of the definition format. The photograph is the picture a buyer
+   * most wants to put on the page from the phone in their hand, and until this
+   * widening it was the one picture field the upload capability could not
+   * reach: `src` was an https URL, and an upload is named `/a/<key>`.
+   */
+  it('takes an upload as its src, the way the artwork and the envelope always could', () => {
+    const config = {
+      ...valid,
+      image: { src: '/a/abcdef012345abcdef012345-w480.webp', alt: 'The two of us' },
+    }
+    expect(heroConfigSchema.parse(config)).toEqual(config)
+  })
+
+  it('takes every stored width, so a phone is not sent the file a laptop needs', () => {
+    const config = {
+      ...valid,
+      image: {
+        src: '/a/abcdef012345abcdef012345-w480.webp',
+        alt: 'The two of us',
+        widths: [
+          { src: '/a/abcdef012345abcdef012345-w480.webp', width: 480 },
+          { src: '/a/bbcdef012345abcdef012345-w960.webp', width: 960 },
+        ],
+      },
+    }
+    expect(heroConfigSchema.parse(config)).toEqual(config)
+  })
+
+  it('still refuses a width that is not a picture this app would serve', () => {
+    const result = heroConfigSchema.safeParse({
+      ...valid,
+      image: {
+        src: '/a/abcdef012345abcdef012345-w480.webp',
+        alt: 'The two of us',
+        widths: [{ src: '/a/abcdef012345abcdef012345-w480.svg', width: 480 }],
+      },
+    })
+    expect(result.success).toBe(false)
   })
 
   describe('artwork', () => {

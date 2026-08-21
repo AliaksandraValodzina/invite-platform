@@ -152,9 +152,9 @@ The whole path, with nothing invented at either end:
    to the widths `UPLOAD_KIND_SPECS.envelope` names, stores each at the sha256 of
    its own bytes, and enforces one envelope per event in the database rather than
    in a route.
-3. `envelopeImageFromUpload` (`src/lib/uploads/envelope.ts`) turns the stored
+3. `pictureFromUpload` (`src/lib/uploads/picture.ts`) turns the stored
    variants into exactly this `image` object. It is the only place that knows
-   both shapes, and `tests/unit/uploads/envelope.test.ts` parses what it returns
+   both shapes, and `tests/unit/uploads/picture.test.ts` parses what it returns
    with `envelopeConfigSchema`, so the two halves cannot drift apart in silence.
 4. `EnvelopeCover` draws it, resolving each `/a/<key>` through `resolveAssetSrc`
    at render time.

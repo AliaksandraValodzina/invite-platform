@@ -11,7 +11,7 @@
  *
  * A buyer's uploaded envelope has to survive the round trip through a real
  * stored document. What the upload capability writes is built and checked in
- * tests/unit/uploads/envelope.test.ts; this is the other end of it, resolved
+ * tests/unit/uploads/picture.test.ts; this is the other end of it, resolved
  * out of `event_content.content` the way a guest page resolves it.
  *
  * And a broken override must not cost the guest the invitation. The cover
@@ -134,7 +134,7 @@ describe("a buyer's own envelope", () => {
 
   it('renders a picture the upload capability wrote, with every width it stored', () => {
     /*
-     * Exactly what `envelopeImageFromUpload` produces, resolved through the
+     * Exactly what `pictureFromUpload` produces, resolved through the
      * real resolver: keys as `/a/<key>`, no hostname anywhere in the stored
      * document, and both re-encoded widths surviving the round trip. A shape
      * that lost `widths` here would leave the second file stored, charged for

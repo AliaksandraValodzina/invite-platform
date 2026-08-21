@@ -23,16 +23,24 @@
 
 import { z } from 'zod'
 
-import { httpsUrlSchema, imageSourceSchema, optionalText, text } from './primitives'
+import { contentPicture, decorativePicture, httpsUrlSchema, optionalText, text } from './primitives'
 
 // hero ----------------------------------------------------------------------
 
 export const heroConfigSchema = z.strictObject({
-  eyebrow: optionalText(60),
-  headline: text(120),
-  subhead: optionalText(200),
-  /** alt is required whenever an image is present. It is content, not polish. */
-  image: z.strictObject({ src: httpsUrlSchema, alt: text(160) }).optional(),
+  eyebrow: optionalText(60, 'Line above the names'),
+  headline: text(120, 'Names'),
+  subhead: optionalText(200, 'Line below the names'),
+  /**
+   * A photograph of the couple, drawn inside the reading column.
+   *
+   * It is a `contentPicture`, so alt is required whenever there is one at all,
+   * and its address may be an upload as well as an https URL. It was https only
+   * until definition version 5, which meant the one field a buyer most wants to
+   * fill from their phone was the one field the upload capability could not
+   * reach. See docs/template-format.md.
+   */
+  image: contentPicture('Photograph').optional(),
   /**
    * Decorative invitation artwork, drawn as a band across the head of the page
    * above the names. It is what makes the page read as an invitation rather
@@ -61,7 +69,7 @@ export const heroConfigSchema = z.strictObject({
    * which by the rules in docs/template-format.md is a version bump with no
    * rewrite.
    */
-  artwork: z.strictObject({ src: imageSourceSchema }).optional(),
+  artwork: decorativePicture('Invitation artwork').optional(),
 })
 
 export type HeroConfig = z.infer<typeof heroConfigSchema>
@@ -96,12 +104,12 @@ export const DETAIL_SOURCES = ['event-date', 'event-start-time', 'event-end-time
 
 export const detailsItemSchema = z
   .strictObject({
-    icon: z.enum(DETAIL_ICONS).optional(),
-    label: text(40),
+    icon: z.enum(DETAIL_ICONS).optional().describe('Icon'),
+    label: text(40, 'Label'),
     /** Literal text. Exactly one of value or source is present. */
-    value: optionalText(240),
+    value: optionalText(240, 'What it says'),
     /** Reads the value off the event row instead of storing a second copy of it. */
-    source: z.enum(DETAIL_SOURCES).optional(),
+    source: z.enum(DETAIL_SOURCES).optional().describe('Or read it off the event'),
   })
   .superRefine((item, ctx) => {
     const supplied = [item.value !== undefined, item.source !== undefined].filter(Boolean).length
@@ -114,8 +122,8 @@ export const detailsItemSchema = z
   })
 
 export const detailsConfigSchema = z.strictObject({
-  heading: optionalText(80),
-  items: z.array(detailsItemSchema).min(1).max(8),
+  heading: optionalText(80, 'Heading'),
+  items: z.array(detailsItemSchema).min(1).max(8).describe('The list'),
 })
 
 export type DetailsConfig = z.infer<typeof detailsConfigSchema>
@@ -130,14 +138,15 @@ export const COUNTDOWN_UNITS = ['days', 'hours', 'minutes', 'seconds'] as const
  * boundary is handled in one place instead of once per template.
  */
 export const countdownConfigSchema = z.strictObject({
-  heading: optionalText(80),
+  heading: optionalText(80, 'Heading'),
   units: z
     .array(z.enum(COUNTDOWN_UNITS))
     .min(1)
     .max(COUNTDOWN_UNITS.length)
-    .refine((units) => new Set(units).size === units.length, 'units must not repeat'),
+    .refine((units) => new Set(units).size === units.length, 'units must not repeat')
+    .describe('Count in'),
   /** Shown once the event has started. A countdown with nothing to say is a bug guests see. */
-  passedMessage: text(120),
+  passedMessage: text(120, 'Once the day arrives'),
 })
 
 export type CountdownConfig = z.infer<typeof countdownConfigSchema>
@@ -145,19 +154,20 @@ export type CountdownConfig = z.infer<typeof countdownConfigSchema>
 // map -----------------------------------------------------------------------
 
 export const mapConfigSchema = z.strictObject({
-  heading: optionalText(80),
-  venueName: text(120),
+  heading: optionalText(80, 'Heading'),
+  venueName: text(120, 'Venue'),
   /** Free text, newlines allowed, because addresses are not uniform across countries. */
-  address: text(240),
+  address: text(240, 'Address'),
   /** A link out to a maps app. No embedded provider or key here: that is deployment config. */
-  directionsUrl: httpsUrlSchema.optional(),
+  directionsUrl: httpsUrlSchema.optional().describe('Link to directions'),
   coordinates: z
     .strictObject({
-      lat: z.number().min(-90).max(90),
-      lng: z.number().min(-180).max(180),
+      lat: z.number().min(-90).max(90).describe('Latitude'),
+      lng: z.number().min(-180).max(180).describe('Longitude'),
     })
-    .optional(),
-  note: optionalText(200),
+    .optional()
+    .describe('Coordinates'),
+  note: optionalText(200, 'Note'),
 })
 
 export type MapConfig = z.infer<typeof mapConfigSchema>
@@ -187,18 +197,20 @@ export type MapConfig = z.infer<typeof mapConfigSchema>
  * this document rather than from the submitted form.
  */
 export const rsvpFormConfigSchema = z.strictObject({
-  heading: optionalText(80),
-  intro: optionalText(300),
-  submitLabel: text(40),
-  successMessage: text(200),
+  heading: optionalText(80, 'Heading'),
+  intro: optionalText(300, 'Introduction'),
+  submitLabel: text(40, 'Button'),
+  successMessage: text(200, 'Thank you message'),
   /** Shown during the grace period, when the page still serves but RSVPs are closed. */
-  closedMessage: text(200),
-  deadlineNote: optionalText(160),
-  guestCount: z.strictObject({
-    enabled: z.boolean(),
-    label: optionalText(60),
-    max: z.number().int().min(1).max(20),
-  }),
+  closedMessage: text(200, 'Message once replies are closed'),
+  deadlineNote: optionalText(160, 'Reply-by note'),
+  guestCount: z
+    .strictObject({
+      enabled: z.boolean().describe('Ask how many are coming'),
+      label: optionalText(60, 'Label'),
+      max: z.number().int().min(1).max(20).describe('Most a guest may bring'),
+    })
+    .describe('Party size'),
 })
 
 export type RsvpFormConfig = z.infer<typeof rsvpFormConfigSchema>
