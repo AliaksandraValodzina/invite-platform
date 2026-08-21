@@ -77,6 +77,7 @@ expiry and RSVP retention, is in `docs/data-model.md`.
 - No em dashes in code, comments, commit messages or PR bodies.
 - No co-author trailer on commits.
 - Commit and PR messages say what changed and why, in plain sentences.
+- `tsconfig.json` is committed in the exact shape `next dev` writes it, and is in `.prettierignore` so the two formatters cannot take turns. Never reformat it; `tests/unit/toolchain/tsconfig-shape.test.ts` explains why and fails if it drifts.
 
 ## Maintaining this file
 
