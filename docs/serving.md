@@ -21,6 +21,13 @@ boundary: the row is untouched at expiry, at grace and at everything after
 A slug with no row is a fifth answer: the designed 404 in
 `src/app/e/[slug]/not-found.tsx`, served at a real 404 status.
 
+The two states that serve an invitation serve it under a closed envelope, and
+the two that serve a notice do not: an envelope over an expiry notice would be a
+cover over nothing. The envelope changes nothing else on this page. It is markup
+inside the same render, it fetches nothing, it runs no script, and it does not
+touch the cache lifetime below, which is a privacy control rather than a speed
+one. See `docs/envelope.md`.
+
 There is a sixth, which is not a serving state: `unavailable`. It covers a
 database that could not be read, a stored document that no longer validates, and
 a published event with no published content revision. All three are ours rather

@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 
 import { BlockList } from '@/components/blocks'
+import { EnvelopeCover, envelopeHeadline } from '@/components/envelope'
 import { GuestNotice } from '@/components/guest-notice'
 import { ThemeScope } from '@/components/theme-scope'
 import { readSiteConfig } from '@/lib/env'
@@ -153,7 +154,16 @@ function renderPage(
      * component that turns tokens into CSS stays free of anything Next
      * specific. The preview route does the same thing in the same place.
      */
-    <ThemeScope tokens={withWebFonts(page.tokens)}>
+    <ThemeScope
+      tokens={withWebFonts(page.tokens)}
+      /*
+       * The envelope is drawn over the invitation, never in place of it. The
+       * blocks below are rendered whole and stay reachable whether or not the
+       * cover ever opens, which is the contract the whole thing is built to
+       * keep. See src/components/envelope/envelope-cover.tsx.
+       */
+      cover={<EnvelopeCover config={page.envelope} headline={envelopeHeadline(page.blocks)} />}
+    >
       <BlockList
         blocks={page.blocks}
         context={{

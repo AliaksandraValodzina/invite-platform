@@ -3,6 +3,7 @@ import { expect, test } from '@playwright/test'
 import { resolveSeedConfig, type SeededEvent } from '../../scripts/seed-event'
 import { DEFAULT_RSVP_QUESTIONS } from '../../src/lib/rsvp/questions.ts'
 import { signIn } from '../support/auth'
+import { openEnvelope } from '../support/envelope'
 import { GUEST_QUESTION_PROMPTS, seedGuestEvent } from '../support/events'
 
 /**
@@ -111,6 +112,7 @@ test.describe('replying to an invitation', () => {
     const { event, ownerEmail } = await freshEvent()
 
     await page.goto(`/e/${event.slug}`)
+    await openEnvelope(page)
 
     await page.getByLabel(GUEST_QUESTION_PROMPTS.name as string).fill('Priya Raman')
     await page.getByLabel(GUEST_QUESTION_PROMPTS.email as string).fill('Priya@Example.Test')
@@ -152,6 +154,7 @@ test.describe('replying to an invitation', () => {
     const { event, ownerEmail } = await freshEvent()
 
     await page.goto(`/e/${event.slug}`)
+    await openEnvelope(page)
     await page.getByLabel(GUEST_QUESTION_PROMPTS.name as string).fill('Marcus Webb')
     // A comma and a quote, because a CSV that gets either wrong turns one
     // answer into two columns or ends the field early.
@@ -179,6 +182,7 @@ test.describe('replying to an invitation', () => {
     const { event } = await freshEvent()
 
     await page.goto(`/e/${event.slug}`)
+    await openEnvelope(page)
 
     /*
      * The browser's own `required` would stop this before it left the page, so
@@ -209,6 +213,7 @@ test.describe('replying to an invitation', () => {
     const { event } = await freshEvent('grace')
 
     await page.goto(`/e/${event.slug}`)
+    await openEnvelope(page)
     await expect(page.getByTestId('rsvp-closed')).toBeVisible()
 
     /*
@@ -267,6 +272,7 @@ test.describe('retiring a question', () => {
     const dietaryPrompt = GUEST_QUESTION_PROMPTS.dietary as string
 
     await page.goto(`/e/${event.slug}`)
+    await openEnvelope(page)
     await page.getByLabel(GUEST_QUESTION_PROMPTS.name as string).fill('Priya Raman')
     await page.getByLabel(dietaryPrompt).fill('severe nut allergy')
     await page.getByRole('button', { name: 'Send our reply' }).click()
@@ -310,6 +316,7 @@ test.describe('retiring a question', () => {
     const dietaryPrompt = GUEST_QUESTION_PROMPTS.dietary as string
 
     await page.goto(`/e/${event.slug}`)
+    await openEnvelope(page)
 
     await expect(page.getByLabel(GUEST_QUESTION_PROMPTS.name as string)).toBeVisible()
     await expect(page.getByLabel(dietaryPrompt)).toHaveCount(0)
@@ -323,6 +330,7 @@ test.describe('who can read a reply', () => {
     const { event } = await freshEvent()
 
     await page.goto(`/e/${event.slug}`)
+    await openEnvelope(page)
     await page.getByLabel(GUEST_QUESTION_PROMPTS.name as string).fill('Priya Raman')
     await page.getByRole('button', { name: 'Send our reply' }).click()
     await expect(page.getByTestId('rsvp-success')).toBeVisible()

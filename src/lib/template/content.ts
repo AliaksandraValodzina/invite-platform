@@ -2,7 +2,8 @@
  * The event content document: what a buyer changed, keyed by block id.
  *
  * Stored in `event_content.content`, shape `{ version, blocks: { <id>: {...} } }`,
- * which is what the check constraints on that table already assert.
+ * which is what the check constraints on that table already assert, plus an
+ * optional `envelope`, which is the cover and has no block id to be keyed by.
  *
  * Content holds OVERRIDES, not a copy of the page. A block the buyer never
  * touched has no entry here at all, so a fix to a template's default copy
@@ -29,9 +30,25 @@ import { z } from 'zod'
 import { createDocumentPipeline, type DocumentMigration } from './document'
 import { slugSchema } from './primitives'
 
-export const CURRENT_CONTENT_VERSION = 1
+export const CURRENT_CONTENT_VERSION = 2
 
-export const CONTENT_MIGRATIONS: readonly DocumentMigration[] = []
+export const CONTENT_MIGRATIONS: readonly DocumentMigration[] = [
+  {
+    from: 1,
+    to: 2,
+    description: 'content gains an envelope override, beside the block overrides',
+    /*
+     * Nothing to rewrite. `envelope` is optional, so a version 1 document
+     * validates against the version 2 schema exactly as it was stored, and an
+     * event that never touched its envelope renders the template's one.
+     *
+     * The number moves for the same reason it moves on a definition: the shape
+     * of the document changed, `event_content.content_version` mirrors it, and
+     * a change nothing downstream can see is a change nobody can find later.
+     */
+    migrate: (document) => ({ ...document, version: 2 }),
+  },
+]
 
 const overrideRecordSchema = z
   .record(z.string(), z.unknown())
@@ -40,6 +57,17 @@ const overrideRecordSchema = z
 export const eventContentSchema = z.strictObject({
   version: z.number().int().positive(),
   blocks: z.record(slugSchema, overrideRecordSchema),
+  /**
+   * The buyer's overrides for the cover, merged the same way a block's are:
+   * top level key replace, with `null` clearing a field.
+   *
+   * It is a sibling of `blocks` and not a key inside it because the envelope is
+   * not a block and has no block id to be keyed by. This is also where a buyer
+   * supplied envelope picture lands, as `{ "envelope": { "image": ... } }`,
+   * built from an `envelope` kind upload by `envelopeImageFromUpload` in
+   * src/lib/uploads/envelope.ts. See docs/envelope.md.
+   */
+  envelope: overrideRecordSchema.optional(),
 })
 
 export type EventContent = z.infer<typeof eventContentSchema>

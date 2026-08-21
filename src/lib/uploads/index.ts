@@ -24,6 +24,8 @@ export {
   sha256Hex,
 } from './address'
 
+export { envelopeImageFromUpload, type EnvelopeImageContent, type StoredVariant } from './envelope'
+
 export {
   MAX_INPUT_PIXELS,
   WEBP_QUALITY,

@@ -1,5 +1,9 @@
 {
-  "version": 3,
+  "version": 4,
+  "envelope": {
+    "note": "You're invited",
+    "openLabel": "Tap to open"
+  },
   "blocks": [
     {
       "id": "hero",

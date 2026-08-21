@@ -8,13 +8,19 @@ the details list share are in `src/lib/event/time.ts`.
 Start at `docs/template-format.md` for the documents these render. This file is
 about what a block is allowed to do.
 
+The envelope is not one of them. It is a cover drawn over the whole page rather
+than a section of it, so it lives in `src/components/envelope/` and is not in
+`BLOCK_CONFIG_SCHEMAS`. It obeys this file's token rule anyway, and the same
+guard reads its directory. See `docs/envelope.md`.
+
 ## A block consumes tokens and nothing else
 
 That is the rule the whole set is built around, and it is checkable rather than
 aspirational. `tests/unit/components/block-tokens.test.ts` reads every file in
-`src/components/blocks/` and fails the pull request on a hex colour, a CSS
-length, an inline style, or any Tailwind class from a colour, font, radius or
-spacing namespace that is not reading a `var(--token)`. The list of legal tokens
+`src/components/blocks/` and in `src/components/envelope/`, and fails the pull
+request on a hex colour, a CSS length, an inline style, or any Tailwind class
+from a colour, font, radius or spacing namespace that is not reading a
+`var(--token)`. The list of legal tokens
 comes from `themeToCssVariables`, so removing a role from the schema breaks
 every block still using it.
 
@@ -63,8 +69,9 @@ follows from it being decoration rather than content.
   `bleed` slot rather than the hero reaching outside itself with a negative
   margin, so the band spans the page canvas and starts at its top edge. The band
   and the names lockup are one section that nothing outside positions, which is
-  what an envelope reveal would need in order to wrap, clip and animate the
-  composition as a unit.
+  what the envelope reveal needed in order to sit over the composition without
+  reaching into it. It did: `ThemeScope` grew a `cover` slot rather than the
+  envelope reaching into the hero. See `docs/envelope.md`.
 
 ## The token roles the block set actually consumes
 

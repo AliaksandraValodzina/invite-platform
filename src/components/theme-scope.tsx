@@ -20,9 +20,26 @@ import { themeToCssVariables, type ThemeTokens } from '@/lib/template'
 
 export function ThemeScope({
   tokens,
+  cover,
   children,
 }: {
   readonly tokens: ThemeTokens
+  /**
+   * Drawn inside the token scope but outside the reading measure, and first in
+   * the document.
+   *
+   * Outside the measure because the envelope is a page rather than a section:
+   * it paints the whole canvas, and `max-w-prose` is a property of the column
+   * the blocks read in. First in the document because it is the first thing a
+   * guest sees, so it is the first thing the keyboard reaches, and because a
+   * page whose stylesheet never arrived then reads top to bottom in the order
+   * it was meant to: the cover, and then the invitation under it.
+   *
+   * Same slot shape as `BlockSection`'s `bleed`, for the same reason: the thing
+   * that needs to escape a wrapper asks for it, rather than reaching out of one
+   * with a negative margin.
+   */
+  readonly cover?: ReactNode
   readonly children: ReactNode
 }) {
   return (
@@ -33,6 +50,7 @@ export function ThemeScope({
       style={themeToCssVariables(tokens) as CSSProperties}
       className="type-body min-h-dvh w-full bg-[var(--color-bg)] text-[color:var(--color-ink)]"
     >
+      {cover}
       {/*
        * The reading measure lives here rather than in a block, because it is a
        * property of the page canvas rather than of any one section, and because

@@ -104,10 +104,17 @@ export const PREVIEW_EVENT: EventSchedule = {
  * a real thing rather than a preview switch: `null` in an override means "clear
  * this field", which is how a buyer deletes something out of the guided form, so
  * this fixture also happens to be the only place that path is visible on screen.
+ *
+ * `universal-envelope` clears every field the template's envelope carries, which
+ * leaves the envelope every theme gets when a template says nothing at all. It
+ * is the same override path for the same reason: the universal envelope has to
+ * be a document that resolves to it, not a branch in a component, or the thing
+ * on screen would not be the thing a guest gets.
  */
 export const PREVIEW_FIXTURES: Readonly<Record<string, unknown>> = {
   sample: { version: 1, blocks: {} },
   'no-artwork': { version: 1, blocks: { hero: { artwork: null } } },
+  'universal-envelope': { version: 2, blocks: {}, envelope: { note: null, openLabel: null } },
   'long-names': {
     version: 1,
     blocks: { hero: { headline: 'Alexandra & Christopher' } },

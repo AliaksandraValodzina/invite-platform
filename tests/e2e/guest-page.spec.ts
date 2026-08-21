@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test'
 
 import type { SeededEvent } from '../../scripts/seed-event'
 import { DEFAULT_RSVP_QUESTIONS } from '../../src/lib/rsvp/questions.ts'
+import { openEnvelope } from '../support/envelope'
 import {
   GUEST_CLOSED_MESSAGE,
   GUEST_HEADLINE,
@@ -73,6 +74,54 @@ test.describe('the guest page', () => {
     // Replies are open: the form is there, and it is the buyer's copy on it.
     await expect(page.getByRole('button', { name: 'Send our reply' })).toBeVisible()
     await expect(page.getByLabel(GUEST_QUESTION_PROMPTS.name as string)).toBeVisible()
+  })
+
+  test('arrives as a closed envelope, with the whole invitation already under it', async ({
+    page,
+  }) => {
+    await page.goto(`/e/${slugFor('live')}`)
+
+    // Closed, and drawn from this event's theme rather than from artwork.
+    await expect(page.locator('[data-envelope-cover]')).toBeVisible()
+    await expect(page.locator('[data-envelope-cover]')).toHaveAttribute(
+      'data-envelope-drawn-from',
+      'tokens'
+    )
+    // The cover shows the couple's own names, read off the hero rather than
+    // stored a second time.
+    await expect(page.locator('[data-envelope-headline]')).toHaveText(GUEST_HEADLINE)
+
+    /*
+     * The claim the envelope is built around, made against the bytes the server
+     * sent. The details a guest came for are in the document before anything is
+     * clicked and before any script has run, so the cover cannot be delaying
+     * them and cannot be hiding them from anything that does not paint.
+     */
+    const markup = await page.content()
+    expect(markup).toContain(GUEST_VENUE)
+    expect(markup).toContain('Sunday 14 March 2027')
+    expect(markup).toContain('Send our reply')
+
+    // One h1 on the page, and it is the invitation's, not the cover's.
+    expect(await page.getByRole('heading', { level: 1 }).count()).toBe(1)
+
+    await openEnvelope(page)
+
+    // And now the form can actually be reached, which is what the cover was in
+    // the way of. `trial` runs the actionability checks without submitting.
+    await page.getByLabel(GUEST_QUESTION_PROMPTS.name as string).fill('Priya Raman')
+    await page.getByRole('button', { name: 'Send our reply' }).click({ trial: true })
+  })
+
+  test('puts no envelope over a page that is not serving an invitation', async ({ page }) => {
+    // An envelope over an expiry notice would be a cover over nothing, and a
+    // guest opening it at an emotional moment to find an apology. The notice
+    // states are their own page and this is the assertion that they stay that
+    // way.
+    for (const state of ['unpublished', 'expired'] as const) {
+      await page.goto(`/e/${slugFor(state)}`)
+      await expect(page.locator('[data-envelope]')).toHaveCount(0)
+    }
   })
 
   test('keeps serving after hosting lapses, with replies closed', async ({ page }) => {

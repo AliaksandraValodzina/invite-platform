@@ -29,6 +29,18 @@ const FIXTURES: readonly { readonly key: string; readonly label: string }[] = [
   { key: 'sample', label: 'Template defaults' },
 ]
 
+/**
+ * The cover, which the preview otherwise starts opened.
+ *
+ * Two links rather than one, because the two are the whole claim the envelope
+ * makes: the theme's own envelope, drawn from that direction's tokens, and the
+ * universal one every theme falls back to when a template says nothing.
+ */
+const ENVELOPES: readonly { readonly query: string; readonly label: string }[] = [
+  { query: 'envelope=closed&fixture=report-sample', label: 'The envelope' },
+  { query: 'envelope=closed&fixture=universal-envelope', label: 'The universal envelope' },
+]
+
 export default function PreviewIndexPage() {
   return (
     <main className="mx-auto max-w-2xl p-6">
@@ -53,6 +65,13 @@ export default function PreviewIndexPage() {
         see what it is doing.
       </p>
 
+      <p className="mt-4 text-sm text-slate-600">
+        Every link below starts with the envelope already opened, because this page exists to look
+        at the blocks. <span className="font-medium">The envelope</span> and{' '}
+        <span className="font-medium">The universal envelope</span> start it closed. It opens on a
+        tap with no JavaScript involved, and the invitation underneath is reachable either way.
+      </p>
+
       <h2 className="mt-8 text-lg font-semibold">The template line</h2>
       <p className="mt-1 text-sm text-slate-600">
         Three design directions, built as three themes rather than narrowed to one. Emma &amp; Jake
@@ -75,6 +94,17 @@ export default function PreviewIndexPage() {
                   className="text-blue-700 underline"
                 >
                   {fixture.label}
+                </Link>
+              ))}
+            </p>
+            <p className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm">
+              {ENVELOPES.map((envelope) => (
+                <Link
+                  key={envelope.query}
+                  href={`/preview/${direction.key}?${envelope.query}`}
+                  className="text-blue-700 underline"
+                >
+                  {envelope.label}
                 </Link>
               ))}
             </p>

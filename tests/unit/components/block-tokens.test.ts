@@ -34,10 +34,29 @@ const KNOWN_TOKENS = Object.keys(
 
 const BLOCKS_DIR = fileURLToPath(new URL('../../../src/components/blocks/', import.meta.url))
 
-function blockSources(): { name: string; source: string }[] {
-  return readdirSync(BLOCKS_DIR)
+/**
+ * The envelope is not a block, and it is held to the block rule anyway.
+ *
+ * It is a cover drawn over the page rather than a section of it, so it lives in
+ * its own directory and is not in `BLOCK_CONFIG_SCHEMAS`. But the reason for
+ * the rule applies to it exactly as it applies to a block: one component has to
+ * produce a different envelope in every direction, and a hex value inside it is
+ * a direction that cannot have its own. See docs/envelope.md.
+ */
+const ENVELOPE_DIR = fileURLToPath(new URL('../../../src/components/envelope/', import.meta.url))
+
+function sourcesIn(directory: string): { name: string; source: string }[] {
+  return readdirSync(directory)
     .filter((name) => name.endsWith('.tsx'))
-    .map((name) => ({ name, source: readFileSync(`${BLOCKS_DIR}${name}`, 'utf8') }))
+    .map((name) => ({ name, source: readFileSync(`${directory}${name}`, 'utf8') }))
+}
+
+function blockSources(): { name: string; source: string }[] {
+  return sourcesIn(BLOCKS_DIR)
+}
+
+function envelopeSources(): { name: string; source: string }[] {
+  return sourcesIn(ENVELOPE_DIR)
 }
 
 describe('the guard itself', () => {
@@ -132,6 +151,45 @@ describe('the five v1 blocks', () => {
   it('draws its icons in currentColor, so an icon is themed by the text around it', () => {
     const icons = readFileSync(`${BLOCKS_DIR}icons.tsx`, 'utf8')
     const paints = icons.match(/(?:fill|stroke)="([^"]*)"/g) ?? []
+
+    expect(paints.length).toBeGreaterThan(0)
+    for (const paint of paints) {
+      expect(['fill="none"', 'stroke="currentColor"']).toContain(paint)
+    }
+  })
+})
+
+describe('the envelope, which is not a block and obeys the block rule', () => {
+  const sources = envelopeSources()
+
+  it('is the file set the guard thinks it is', () => {
+    expect(sources.map((file) => file.name).sort()).toEqual(['envelope-cover.tsx'])
+  })
+
+  it.each(envelopeSources())('$name writes no colour, font, radius or spacing value', (file) => {
+    expect(findStyleViolations(file.source, KNOWN_TOKENS)).toEqual([])
+  })
+
+  it.each(envelopeSources())('$name writes none of the three failing pairings', (file) => {
+    expect(findContrastViolations(file.source)).toEqual([])
+  })
+
+  it('draws its envelope in tokens, so three directions get three envelopes', () => {
+    // Without this the assertions above would pass against a component that had
+    // stopped drawing anything at all. These are the four roles the cover reads
+    // and the reason it looks different in every theme: the paper, the folds,
+    // the seal and the ink on it.
+    const source = sources.map((file) => file.source).join('\n')
+
+    expect(source).toContain('bg-[var(--color-surface)]')
+    expect(source).toContain('border-[color:var(--color-ink-muted)]')
+    expect(source).toContain('bg-[var(--color-accent)]')
+    expect(source).toContain('text-[color:var(--color-accent-ink)]')
+  })
+
+  it('paints its geometry in currentColor, so the folds are themed by the paper', () => {
+    const source = sources.map((file) => file.source).join('\n')
+    const paints = source.match(/(?:fill|stroke)="([^"]*)"/g) ?? []
 
     expect(paints.length).toBeGreaterThan(0)
     for (const paint of paints) {
