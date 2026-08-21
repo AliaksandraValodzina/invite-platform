@@ -5,6 +5,10 @@ import { expect, test, type Page } from '@playwright/test'
 
 import { parseHex } from '../../src/lib/template/contrast'
 import { themePipeline, type ThemeTokens } from '../../src/lib/template/theme'
+import { envelopeImageFromUpload } from '@/lib/uploads'
+import { signIn } from '../support/auth'
+import { GUEST_CONTENT, seedGuestEvent } from '../support/events'
+import { distinctPhotograph, upload } from '../support/uploads'
 
 /**
  * The envelope, in a browser.
@@ -305,5 +309,95 @@ test.describe('the preview affordance', () => {
     // assumed.
     await expect(page.locator('[data-envelope-cover]')).toBeHidden()
     await expect(page.getByRole('button', { name: 'Send RSVP' })).toBeVisible()
+  })
+})
+
+test.describe("a buyer's own envelope, through the real upload capability", () => {
+  /**
+   * The seam, wired, and this is the test that says so.
+   *
+   * Nothing here fabricates a path. Bytes go to `POST /api/uploads` as a signed
+   * in buyer under the `envelope` kind, the capability sniffs, re-encodes and
+   * content addresses them, `envelopeImageFromUpload` turns the variants it
+   * stored into the exact content the format accepts, and a guest opens a page
+   * that names them. Every link in that chain is the shipping one, which is the
+   * difference between this and an assertion that a string appears in an
+   * attribute.
+   *
+   * Two events rather than one, because a guest page has to be right on its
+   * FIRST render: it is cached for up to a minute on purpose, so uploading onto
+   * a page that already exists is a test racing a bound this repo chose. The
+   * upload is made against the buyer's own event, and the page is seeded with
+   * the result. Serving one object to two events is the capability working as
+   * designed, not a hole: a key is the sha256 of its own bytes, so two events
+   * that hold the same picture hold one object.
+   */
+  test.beforeEach(({ browserName: _browserName }, testInfo) => {
+    test.skip(
+      testInfo.project.name !== 'desktop-chromium',
+      'the upload half has no layout, and a second run is a second billed minute'
+    )
+  })
+
+  test('is drawn on the cover, from the widths the capability stored', async ({ page }) => {
+    const ownerEmail = `envelope-buyer-${Date.now().toString(36)}@example.test`
+    const buyersEvent = await seedGuestEvent('live', { ownerEmail })
+    await signIn(page, ownerEmail)
+
+    const stored = await upload(page.request, {
+      eventId: buyersEvent.eventId,
+      kind: 'envelope',
+      name: 'our-envelope.jpg',
+      mimeType: 'image/jpeg',
+      // Its own pixels, so its derivatives are its own objects and the sweep
+      // specs cannot delete the bytes this test is standing on.
+      bytes: await distinctPhotograph(1287),
+    })
+
+    expect(stored.status, stored.message).toBe(201)
+
+    const image = envelopeImageFromUpload(stored.variants ?? [])
+    expect(image, 'the capability stored no width to draw').not.toBeNull()
+
+    const event = await seedGuestEvent('live', {
+      content: { ...GUEST_CONTENT, envelope: { image } },
+    })
+
+    await page.goto(`/e/${event.slug}`)
+
+    const picture = page.locator('[data-envelope-picture]')
+    await expect(page.locator('[data-envelope-cover]')).toHaveAttribute(
+      'data-envelope-drawn-from',
+      'image'
+    )
+    await expect(page.locator('[data-envelope-drawing]')).toHaveCount(0)
+
+    /*
+     * The picture the browser actually chose, not the one the document listed
+     * first. `currentSrc` is the browser reporting back which candidate it
+     * fetched, which is the only way to tell a working srcset from a decorative
+     * one, and this project runs at 320px as well as at desktop width.
+     */
+    const chosen = await picture.evaluate((element) => ({
+      currentSrc: (element as HTMLImageElement).currentSrc,
+      naturalWidth: (element as HTMLImageElement).naturalWidth,
+      candidates: (element as HTMLImageElement).srcset,
+    }))
+
+    for (const width of image?.widths ?? []) {
+      expect(chosen.candidates).toContain(`${width.src} ${width.width}w`)
+    }
+
+    expect(chosen.currentSrc).toContain('/a/')
+    // It decoded. A src that 404s reports a natural width of zero, and every
+    // assertion above would still have passed.
+    expect(chosen.naturalWidth).toBeGreaterThan(0)
+
+    // And it is still an envelope rather than a gate: the details are under it
+    // and the guest can reach them.
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
+    await page.locator('[data-envelope-cover]').click()
+    await expectOpened(page)
+    await expect(page.getByRole('button', { name: 'Send our reply' })).toBeVisible()
   })
 })

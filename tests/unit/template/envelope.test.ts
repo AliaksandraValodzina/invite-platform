@@ -9,9 +9,10 @@
  * all three are exercised here: a definition that predates the envelope, one
  * that carries an empty envelope, and a buyer who cleared every field.
  *
- * The buyer image seam has to be a place a stored path actually renders from,
- * or it is not a seam, it is a promise. Nothing writes it yet, so this is the
- * only thing standing between the field and a rename nobody notices.
+ * A buyer's uploaded envelope has to survive the round trip through a real
+ * stored document. What the upload capability writes is built and checked in
+ * tests/unit/uploads/envelope.test.ts; this is the other end of it, resolved
+ * out of `event_content.content` the way a guest page resolves it.
  *
  * And a broken override must not cost the guest the invitation. The cover
  * degrades; the page serves.
@@ -131,20 +132,51 @@ describe("a buyer's own envelope", () => {
     expect(outcome.page.envelope).toEqual({ note: 'Save the date', openLabel: 'Tap to open' })
   })
 
-  it('renders a picture the upload capability has not written yet', () => {
+  it('renders a picture the upload capability wrote, with every width it stored', () => {
     /*
-     * The seam, exercised end to end through the real resolver. Nothing writes
-     * this field today, so without a test the first thing an upload would find
-     * is whether the key was still called what it was called.
+     * Exactly what `envelopeImageFromUpload` produces, resolved through the
+     * real resolver: keys as `/a/<key>`, no hostname anywhere in the stored
+     * document, and both re-encoded widths surviving the round trip. A shape
+     * that lost `widths` here would leave the second file stored, charged for
+     * and never served, and every other test would stay green.
      */
+    const image = {
+      src: '/a/9f2c1ab40d3e7856bb91c204-w800.webp',
+      widths: [
+        { src: '/a/9f2c1ab40d3e7856bb91c204-w800.webp', width: 800 },
+        { src: '/a/41d8e7b0c9a3251f6e0d4487-w1600.webp', width: 1600 },
+      ],
+    }
+
+    const outcome = resolveEventPage(stored({ content: contentWith({ image }) }))
+
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+
+    expect(outcome.page.envelope.image).toEqual(image)
+  })
+
+  it('refuses a width that is not a whole number of pixels, rather than drawing it', () => {
+    // A `w` descriptor is an integer. Anything else silently disables the
+    // candidate in some browsers and is accepted in others, which is the worst
+    // of both: it would be a picture that is right on the machine it was tested
+    // on. The override degrades to the template's envelope instead.
     const outcome = resolveEventPage(
-      stored({ content: contentWith({ image: { src: '/uploads/an-envelope.jpg' } }) })
+      stored({
+        content: contentWith({
+          image: {
+            src: '/a/9f2c1ab40d3e7856bb91c204-w800.webp',
+            widths: [{ src: '/a/9f2c1ab40d3e7856bb91c204-w800.webp', width: 800.5 }],
+          },
+        }),
+      })
     )
 
     expect(outcome.ok).toBe(true)
     if (!outcome.ok) return
 
-    expect(outcome.page.envelope.image).toEqual({ src: '/uploads/an-envelope.jpg' })
+    expect(outcome.page.envelope.image).toBeUndefined()
+    expect(outcome.page.envelopeOverrideRejected?.issues[0]?.path).toContain('width')
   })
 
   it('degrades to the template envelope when the override is not valid, and still serves', () => {
@@ -166,15 +198,28 @@ describe("a buyer's own envelope", () => {
 
 describe('what an envelope may hold', () => {
   it('refuses a picture that is not one this app or an https host serves', () => {
-    for (const src of ['/uploads/script.svg', '/../secrets/x.png', 'http://elsewhere/x.png']) {
+    for (const src of ['/a/script.svg', '/../secrets/x.png', 'http://elsewhere/x.png']) {
       expect(envelopeConfigSchema.safeParse({ image: { src } }).success).toBe(false)
     }
   })
 
+  it('refuses a candidate width that is not one this app or an https host serves', () => {
+    // The candidate list gets the same treatment as the fallback. A `srcset`
+    // is a list of things a browser will fetch, so a rule applied only to `src`
+    // is a rule with a hole the shape of the attribute the browser prefers.
+    expect(
+      envelopeConfigSchema.safeParse({
+        image: {
+          src: '/a/9f2c1ab40d3e7856bb91c204-w800.webp',
+          widths: [{ src: 'http://elsewhere/x.png', width: 1600 }],
+        },
+      }).success
+    ).toBe(false)
+  })
+
   it('has no alt key, so nobody is ever asked to transcribe a picture', () => {
     expect(
-      envelopeConfigSchema.safeParse({ image: { src: '/uploads/x.jpg', alt: 'an envelope' } })
-        .success
+      envelopeConfigSchema.safeParse({ image: { src: '/a/x.jpg', alt: 'an envelope' } }).success
     ).toBe(false)
   })
 

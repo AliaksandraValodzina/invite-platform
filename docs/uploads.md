@@ -161,6 +161,51 @@ Ownership is checked by reading the event **as the buyer**, so the answer comes
 from row level security rather than from a `where` clause somebody could forget.
 Only then does the service role write.
 
+## Getting an upload onto a page
+
+Storing bytes is half of a use. The other half is a document naming them, and
+each kind names them differently: a photo goes in a block's content, the music
+file will name one key, and the envelope is the cover the guest opens first.
+
+Only the envelope half exists so far, and it is `envelopeImageFromUpload` in
+`src/lib/uploads/envelope.ts`. It takes the variants an ingest stored and
+returns exactly the `image` object `envelopeConfigSchema` accepts:
+
+```jsonc
+{
+  "src": "/a/9f2c1ab40d3e7856bb91c204-w800.webp",
+  "widths": [
+    { "src": "/a/9f2c1ab40d3e7856bb91c204-w800.webp", "width": 800 },
+    { "src": "/a/41d8e7b0c9a3251f6e0d4487-w1600.webp", "width": 1600 },
+  ],
+}
+```
+
+Three things about that shape are this capability's rules rather than the
+format's taste.
+
+**Every stored width is named.** Each is a separate content address, so one
+cannot be derived from another, and a document that could hold only one would
+leave the other counted against the event's variant budget and never served.
+
+**`src` is the smallest.** It is the fallback a browser too old to read `srcset`
+fetches, and that browser is on the slowest phone in the room.
+
+**Keys, never URLs.** The hostname is applied at render time by
+`resolveAssetSrc`, for the reason in "Which hostname" above.
+
+It lives here rather than under `src/lib/template/` because the format knows
+nothing about object stores, content addressing or variant labels, and this
+module already knows all three. The dependency points one way and it imports
+nothing from the format; `tests/unit/uploads/envelope.test.ts` parses what it
+returns with the format's own schema, which is the same arrangement `kinds.ts`
+has with the migration carrying the same numbers.
+
+What does not exist yet is the buyer interface that calls it. There is no guided
+form in Phase 0, so nothing in the product performs the upload on a buyer's
+behalf. Every layer under that is shipping, and `tests/e2e/envelope.spec.ts`
+walks the whole chain over HTTP.
+
 ## Retention, and the half Postgres cannot do
 
 Uploads are buyer data, not guest data, so they follow the event rather than the

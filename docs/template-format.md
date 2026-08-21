@@ -168,8 +168,9 @@ definition written before the envelope existed and a buyer who cleared every
 field resolve to the same thing: the universal envelope, drawn from theme tokens.
 
 It carries no headline. The cover shows the invitation's own, read off the
-resolved hero. It carries an `image`, which is where a buyer's uploaded envelope
-picture goes and which nothing writes yet. See `docs/envelope.md`.
+resolved hero. It carries an `image`, which is a buyer's uploaded envelope: an
+`envelope` kind upload, named as `/a/<key>` for every width the capability
+stored and never as a hostname. See `docs/envelope.md`.
 
 ### `rsvp-form` carries no questions
 

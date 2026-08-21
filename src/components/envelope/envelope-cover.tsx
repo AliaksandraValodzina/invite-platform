@@ -54,6 +54,12 @@
 import { Fragment } from 'react'
 
 import type { EnvelopeConfig, TemplateBlock } from '@/lib/template'
+/*
+ * `./host` directly rather than the `@/lib/uploads` barrel: that barrel also
+ * re-exports the encoder, which imports sharp, and a page component has no
+ * business pulling an image pipeline into its module graph to name a file.
+ */
+import { readAssetHostConfig, resolveAssetSrc } from '@/lib/uploads/host'
 
 import { stackNames } from '../blocks/hero-block'
 
@@ -188,7 +194,7 @@ export function EnvelopeCover({
         {config.image === undefined ? (
           <EnvelopeDrawing initials={sealInitials(headline)} />
         ) : (
-          <EnvelopePicture src={config.image.src} />
+          <EnvelopePicture image={config.image} />
         )}
 
         {/*
@@ -291,13 +297,44 @@ function EnvelopeDrawing({ initials }: { readonly initials: string }) {
  * A plain `img`, like the hero's two, because `next/image` wants a host
  * allowlist or stored dimensions and the format has neither yet. No lazy
  * loading and no low priority here: this one is the first thing on screen.
+ *
+ * ## What it does with what the buyer uploaded
+ *
+ * Two things, and both are the upload capability's rules rather than this
+ * component's taste.
+ *
+ * **The hostname is applied here and is never stored.** Content names an
+ * upload as `/a/<key>`, and `resolveAssetSrc` turns that into whatever hostname
+ * this deployment serves assets from. With none configured it stays a same
+ * origin path served by this app, which is not a degraded mode: it is how the
+ * whole capability runs locally with no cloud credential.
+ *
+ * **Every stored width is offered.** An envelope upload is re-encoded to two
+ * widths, they are separate content addresses, and `widths` names both. The
+ * browser picks; a phone at 320 CSS pixels takes the small one and a laptop
+ * takes the large one, from one document.
+ *
+ * There is deliberately no `sizes` attribute. Writing one means writing a CSS
+ * length in a component, which the block token rule forbids and the guard in
+ * `tests/unit/components/block-tokens.test.ts` fails on, and the default it
+ * would replace is `100vw`. On a phone that is very nearly true, because the
+ * picture is full width inside the cover's padding, and the phone is the device
+ * the widths exist for. On a wide screen it over-estimates and the browser
+ * fetches the large file for a picture drawn small, which costs a laptop on
+ * wifi something a phone on hotel wifi would not have been able to afford.
  */
-function EnvelopePicture({ src }: { readonly src: string }) {
+function EnvelopePicture({ image }: { readonly image: EnvelopePictureContent }) {
+  const host = readAssetHostConfig()
+  const srcSet = image.widths
+    ?.map((candidate) => `${resolveAssetSrc(candidate.src, host)} ${candidate.width}w`)
+    .join(', ')
+
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
       data-envelope-picture=""
-      src={src}
+      src={resolveAssetSrc(image.src, host)}
+      {...(srcSet === undefined ? {} : { srcSet })}
       alt=""
       aria-hidden="true"
       decoding="async"
@@ -305,3 +342,6 @@ function EnvelopePicture({ src }: { readonly src: string }) {
     />
   )
 }
+
+/** The `image` half of a resolved envelope, once it is known to be present. */
+type EnvelopePictureContent = NonNullable<EnvelopeConfig['image']>

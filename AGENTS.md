@@ -48,8 +48,10 @@ expiry and RSVP retention, is in `docs/data-model.md`.
   and stays reachable if it never opens. It opens with a checkbox and a sibling
   selector, so no JavaScript, no `:has()`, and nothing `inert` or `aria-hidden`.
   It is not a block: it is `definition.envelope` beside the block list, drawn
-  from theme tokens, with `content.envelope` for the buyer's changes and the
-  inert seam for their uploaded picture. See `docs/envelope.md`.
+  from theme tokens, with `content.envelope` for the buyer's changes. A buyer's
+  own envelope is the `envelope` upload kind and no second path: the content
+  names `/a/<key>` for every stored width and never a hostname. See
+  `docs/envelope.md`.
 - **A block consumes tokens and nothing else. No hardcoded colour, font, radius or spacing value inside a block, ever.** One block set has to produce many visually distinct templates. If a theme variant looks broken, the fix goes into the **token schema** — never into a block component. Blocks live in `src/components/blocks/`, the envelope in `src/components/envelope/` obeys the same rule, a unit test fails the PR on a hardcoded value in either, and `docs/blocks.md` lists the roles they consume.
 - **Guest pages are mobile-first and tested at 320px.** 90%+ of guests arrive from a chat link on a phone, often an old one on bad wifi.
 - **OG/meta tags are a feature, not polish.** The share-card preview in WhatsApp is how an invitation spreads, and it is the first impression of the product.

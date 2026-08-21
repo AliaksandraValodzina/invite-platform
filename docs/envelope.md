@@ -95,7 +95,16 @@ a direction that cannot have its own.
 "envelope": { "note": "You're invited", "openLabel": "Tap to open" }
 
 // event_content.content, beside "blocks" for the same reason
-"envelope": { "note": null, "image": { "src": "/uploads/an-envelope.jpg" } }
+"envelope": {
+  "note": null,
+  "image": {
+    "src": "/a/9f2c1ab40d3e7856bb91c204-w800.webp",
+    "widths": [
+      { "src": "/a/9f2c1ab40d3e7856bb91c204-w800.webp", "width": 800 },
+      { "src": "/a/41d8e7b0c9a3251f6e0d4487-w1600.webp", "width": 1600 }
+    ]
+  }
+}
 ```
 
 Every field is optional, and that is what makes the universal envelope a real
@@ -127,21 +136,62 @@ not validate falls back to the template's envelope, reports itself as
 override rule, applied for the theme override reason: the cover is not the
 invitation.
 
-## The buyer image seam: defined, and inert
+## The buyer's own envelope, wired to the upload capability
 
-`envelope.image` is where a buyer's own envelope picture goes.
+`envelope.image` is where a buyer's own envelope picture goes, and as of this
+change it is an integration rather than a seam. Uploads landed on `main` first,
+so there was a real capability to consume and no reason to leave the field
+inert.
 
-**Nothing writes it.** The uploads capability was being built in parallel and had
-landed nothing when this shipped, so this is a seam and not an integration.
-There is no upload path here, no second storage decision, and no endpoint: the
-field exists, it is validated, and it renders. When uploads land, the write is
-`event_content.content.envelope.image.src`, and the value is an app served path
-under the same rules `hero.artwork` follows (`imageSourceSchema`: a leading
-slash, a closed extension list, no `svg`, no `..`, no `//`).
+The whole path, with nothing invented at either end:
 
-`tests/unit/template/envelope.test.ts` renders a stored path through the real
-resolver, which is what stops the field being quietly renamed before anything
-uses it.
+1. The buyer sends the file to `POST /api/uploads` with `kind=envelope`. That is
+   the one upload endpoint, and there is deliberately no second one here: this is
+   the third use of one capability, not a fourth feature. `docs/uploads.md`.
+2. The capability sniffs the format, refuses what it does not accept, re-encodes
+   to the widths `UPLOAD_KIND_SPECS.envelope` names, stores each at the sha256 of
+   its own bytes, and enforces one envelope per event in the database rather than
+   in a route.
+3. `envelopeImageFromUpload` (`src/lib/uploads/envelope.ts`) turns the stored
+   variants into exactly this `image` object. It is the only place that knows
+   both shapes, and `tests/unit/uploads/envelope.test.ts` parses what it returns
+   with `envelopeConfigSchema`, so the two halves cannot drift apart in silence.
+4. `EnvelopeCover` draws it, resolving each `/a/<key>` through `resolveAssetSrc`
+   at render time.
+
+**It names keys, never URLs.** A stored document outlives the deployment that
+wrote it, so a hostname inside one is a hostname that goes wrong. `/a/<key>` is
+what is stored; the asset hostname is applied when the page renders. That is the
+whole reason changing object storage vendor stays a DNS change instead of a
+rewrite of every buyer's document, and `src/lib/uploads/host.ts` is where the
+argument lives.
+
+**It names every stored width.** The envelope kind is re-encoded to 800 and 1600
+CSS pixels, each of which is a separate content address, so neither can be
+derived from the other and both have to be written down. A content shape that
+could hold only one would leave the other stored, counted against the event's
+50 MB variant budget, and never sent to anybody. `src` is the SMALLEST of them,
+because `src` is what a browser too old to read `srcset` fetches and that
+browser is on the slowest phone in the room.
+
+There is deliberately no `sizes` attribute. Writing one means writing a CSS
+length inside a component, which the block token rule forbids and
+`tests/unit/components/block-tokens.test.ts` fails on. The default it would
+replace is `100vw`, which is very nearly true on a phone, because the picture is
+full width inside the cover's padding, and the phone is the device the widths
+exist for.
+
+**What is still not built is the guided form.** There is no buyer editing
+surface in Phase 0, so nothing in the product yet performs step 1 on a buyer's
+behalf. That is an interface that does not exist, not a seam: every layer under
+it is the shipping one, and `tests/e2e/envelope.spec.ts` walks the whole chain
+over HTTP, from bytes posted as a signed in buyer to a picture a guest's browser
+chose off the `srcset` and decoded.
+
+The field still accepts an https URL and a bundled sample path, under the same
+`imageSourceSchema` rules `hero.artwork` follows: a leading slash, a closed
+extension list, no `svg`, no `..`, no `//`. `resolveAssetSrc` leaves both alone,
+because a hostname somebody typed is already somebody's decision.
 
 **It replaces the drawn envelope, not the background.** That is the decision
 worth defending, and it is why the second reference the captain supplied, which

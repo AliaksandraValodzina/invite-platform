@@ -91,6 +91,11 @@ function openInput(markup: string): string {
   return /<input[^>]*id="envelope-open"[^>]*>/.exec(markup)?.[0] ?? ''
 }
 
+/** The buyer's picture on its own, with its src and srcSet attributes. */
+function picture(markup: string): string {
+  return /<img[^>]*data-envelope-picture[^>]*>/.exec(markup)?.[0] ?? ''
+}
+
 describe('the seal', () => {
   it.each([
     ['Sarah & Tom', 'ST'],
@@ -194,13 +199,43 @@ describe('the universal envelope', () => {
   })
 })
 
+/**
+ * A picture as the upload capability actually produces one: two content
+ * addressed WebP files, named as `/a/<key>` with no hostname in the document.
+ * `tests/unit/uploads/envelope.test.ts` is where this shape is built from a
+ * real upload; here it is what the cover has to draw.
+ */
+const UPLOADED_ENVELOPE = {
+  src: '/a/aaaaaaaaaaaaaaaaaaaaaaaa-w800.webp',
+  widths: [
+    { src: '/a/aaaaaaaaaaaaaaaaaaaaaaaa-w800.webp', width: 800 },
+    { src: '/a/bbbbbbbbbbbbbbbbbbbbbbbb-w1600.webp', width: 1600 },
+  ],
+}
+
 describe('a buyer supplied envelope', () => {
-  const markup = cover({ image: { src: '/uploads/an-envelope.jpg' } }, 'Sarah & Tom')
+  const markup = cover({ image: UPLOADED_ENVELOPE }, 'Sarah & Tom')
 
   it('replaces the drawn envelope rather than the background', () => {
     expect(markup).toContain('data-envelope-drawn-from="image"')
-    expect(markup).toContain('src="/uploads/an-envelope.jpg"')
+    expect(markup).toContain('src="/a/aaaaaaaaaaaaaaaaaaaaaaaa-w800.webp"')
     expect(markup).not.toContain('data-envelope-drawing')
+  })
+
+  it('offers every stored width, so the second one is not stored and never sent', () => {
+    // The envelope kind is re-encoded to two widths and they are separate
+    // content addresses. A cover that named one of them would be paying for
+    // the other out of the event's variant budget forever.
+    expect(picture(markup)).toContain(
+      'srcSet="/a/aaaaaaaaaaaaaaaaaaaaaaaa-w800.webp 800w, ' +
+        '/a/bbbbbbbbbbbbbbbbbbbbbbbb-w1600.webp 1600w"'
+    )
+  })
+
+  it('draws one file with no candidate list when that is all there is', () => {
+    const one = picture(cover({ image: { src: '/a/cccccccccccccccccccccccc-w800.webp' } }))
+    expect(one).toContain('src="/a/cccccccccccccccccccccccc-w800.webp"')
+    expect(one).not.toContain('srcSet')
   })
 
   it('carries no alt text, because the format gives it nowhere to come from', () => {
@@ -213,6 +248,67 @@ describe('a buyer supplied envelope', () => {
     // behind them. Nothing on this page has its contrast measured against an
     // image. See docs/envelope.md.
     expect(markup).not.toMatch(/background-image|bg-\[url/)
+  })
+})
+
+describe("the deployment's asset hostname", () => {
+  /*
+   * The reason nothing stores a URL. `public.uploads` holds keys, content names
+   * `/a/<key>`, and the hostname a browser actually fetches from is decided
+   * here, at render time, from this deployment's configuration. Storing a
+   * hostname would mean that changing object storage vendor is a rewrite of
+   * every buyer's saved document rather than a DNS change. See the top of
+   * src/lib/uploads/host.ts.
+   */
+  function withAssetHost<T>(value: string | undefined, body: () => T): T {
+    const before = process.env.NEXT_PUBLIC_ASSET_HOST
+    if (value === undefined) delete process.env.NEXT_PUBLIC_ASSET_HOST
+    else process.env.NEXT_PUBLIC_ASSET_HOST = value
+
+    try {
+      return body()
+    } finally {
+      if (before === undefined) delete process.env.NEXT_PUBLIC_ASSET_HOST
+      else process.env.NEXT_PUBLIC_ASSET_HOST = before
+    }
+  }
+
+  it('is applied to the picture and to every width it offers', () => {
+    const markup = withAssetHost('https://assets.example.com', () =>
+      picture(cover({ image: UPLOADED_ENVELOPE }))
+    )
+
+    expect(markup).toContain(
+      'src="https://assets.example.com/a/aaaaaaaaaaaaaaaaaaaaaaaa-w800.webp"'
+    )
+    expect(markup).toContain(
+      'srcSet="https://assets.example.com/a/aaaaaaaaaaaaaaaaaaaaaaaa-w800.webp 800w, ' +
+        'https://assets.example.com/a/bbbbbbbbbbbbbbbbbbbbbbbb-w1600.webp 1600w"'
+    )
+  })
+
+  it('leaves the app serving the bytes when none is configured', () => {
+    // Not a degraded mode: it is how the whole capability runs locally and on a
+    // preview deployment with no cloud credential anywhere.
+    const markup = withAssetHost(undefined, () => picture(cover({ image: UPLOADED_ENVELOPE })))
+    expect(markup).toContain('src="/a/aaaaaaaaaaaaaaaaaaaaaaaa-w800.webp"')
+  })
+
+  it('is refused when it names a storage vendor, rather than being written into a page', () => {
+    const markup = withAssetHost('https://bucket.r2.dev', () =>
+      picture(cover({ image: UPLOADED_ENVELOPE }))
+    )
+
+    expect(markup).not.toContain('r2.dev')
+    expect(markup).toContain('src="/a/aaaaaaaaaaaaaaaaaaaaaaaa-w800.webp"')
+  })
+
+  it('leaves a picture that is not an upload exactly as the document named it', () => {
+    const markup = withAssetHost('https://assets.example.com', () =>
+      picture(cover({ image: { src: 'https://images.example.org/their-own.jpg' } }))
+    )
+
+    expect(markup).toContain('src="https://images.example.org/their-own.jpg"')
   })
 })
 
