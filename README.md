@@ -5,10 +5,10 @@ constraints that are binding on every change.
 
 This repo carries the application shell and CI gate, the data model, the
 template definition format, the Open Graph share card, the guest page and the
-reply path: a slug at `/e/<slug>` resolves to an event, a template and a
-published revision, renders through the blocks and themes, and takes a reply
-that the buyer reads back at `/dashboard`. There is no editor and no redemption
-flow yet. Those are separate tasks.
+reply path, and the upload capability: a slug at `/e/<slug>` resolves to an
+event, a template and a published revision, renders through the blocks and
+themes, and takes a reply that the buyer reads back at `/dashboard`. There is no
+editor and no redemption flow yet. Those are separate tasks.
 
 `docs/serving.md` is the place to start on the guest page: the four serving
 states, the read path, and why the page's cache lifetime is a privacy control
@@ -18,6 +18,13 @@ before it is a speed one.
 question type is an addition rather than a migration, what `pii_class` is for,
 and how the buyer reads and exports what their guests wrote. The platform's
 privacy statement and terms are pages, at `/privacy` and `/terms`.
+
+`docs/uploads.md` is uploads: one capability for buyer photos, the music file
+and envelope artwork, with the limits, the content addressed keys that earn a
+one year immutable cache lifetime, the object store behind an interface, and the
+retention half that Postgres cannot do. It runs with no cloud credential: with
+no R2 configured, bytes go to `.uploads/` and are served by the app at
+`/a/<key>` with the same headers.
 
 The template format is the product's file format: three versioned JSON documents,
 five block types, and theme tokens kept out of content. It lives in

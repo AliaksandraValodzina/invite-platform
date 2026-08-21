@@ -1,7 +1,15 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 
-import { GRACE_DAYS, PURGE_DAYS, readPrivacyContact, REDACTION_DAYS } from '@/lib/legal/retention'
+import {
+  GRACE_DAYS,
+  PURGE_DAYS,
+  readPrivacyContact,
+  REDACTION_DAYS,
+  TAKEDOWN_RESPONSE_WORKING_DAYS,
+  UPLOAD_ORIGINAL_RETENTION_DAYS,
+} from '@/lib/legal/retention'
+import { UPLOAD_KIND_SPECS, UPLOAD_MAX_BYTES } from '@/lib/uploads'
 
 /**
  * The terms between the platform and a buyer.
@@ -116,9 +124,38 @@ export default function TermsPage() {
         <p>
           You warrant that you hold the rights to every image, every piece of text and every audio
           file you put on your invitation, and you indemnify us against a claim that you did not.
-          Report anything that looks like it breaks this to <strong>{contact}</strong>; we answer
-          within 5 working days, remove what is clearly infringing, and close accounts that do it
-          repeatedly.
+          Music is where this bites: a song you bought is a song you are licensed to listen to, not
+          one you are licensed to publish on a page you send to a hundred people.
+        </p>
+        <p>
+          Report anything that looks like it breaks this to <strong>{contact}</strong>. We answer
+          within {TAKEDOWN_RESPONSE_WORKING_DAYS} working days and{' '}
+          <strong>remove the single file</strong> rather than the invitation, so a complaint about
+          one song does not take down somebody&rsquo;s wedding page. Accounts that do it repeatedly
+          are closed.
+        </p>
+        <p>
+          One thing we cannot do, and would rather say than imply otherwise: files are served from
+          addresses that browsers are told to keep for a year, because that is what makes an
+          invitation fast on a phone. Removing a file stops it being served from then on. It does
+          not reach the copy already on the phone of somebody who opened the page yesterday.
+        </p>
+      </Section>
+
+      <Section title="How much you can upload">
+        <p>Per invitation, so that the page stays fast on a guest&rsquo;s phone:</p>
+        <ul className="list-disc pl-5">
+          <li>{UPLOAD_KIND_SPECS.image.perEvent} photos</li>
+          <li>{UPLOAD_KIND_SPECS.audio.perEvent} music file</li>
+          <li>{UPLOAD_KIND_SPECS.envelope.perEvent} envelope image</li>
+          <li>up to {UPLOAD_MAX_BYTES / 1_000_000} MB per file, straight off your phone</li>
+        </ul>
+        <p>
+          Photos are re-encoded when they arrive, so what your guests download is a fraction of what
+          you sent and looks the same on a screen. We keep the file you uploaded for{' '}
+          {UPLOAD_ORIGINAL_RETENTION_DAYS} days after you publish, in case you want to re-crop it,
+          and then discard it; the versions on your page are kept for as long as the page serves. We
+          accept JPEG, PNG, WebP and AVIF images, and MP3 or M4A audio.
         </p>
       </Section>
 

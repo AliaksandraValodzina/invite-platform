@@ -77,6 +77,15 @@ export async function seedGuestEvent(
     readonly publishContent?: boolean
     readonly ownerEmail?: string
     readonly questions?: Record<string, unknown>[]
+    /**
+     * Buyer overrides, keyed by block id. Defaults to GUEST_CONTENT.
+     *
+     * A test that needs a page to be right on its FIRST render passes content
+     * here rather than writing a revision afterwards. The guest page is cached
+     * for up to a minute on purpose (src/lib/serving/cache.ts), so "seed, then
+     * edit, then look" is a test racing a bound this repo chose deliberately.
+     */
+    readonly content?: unknown
   } = {}
 ): Promise<SeededEvent> {
   return seedEvent({
@@ -86,7 +95,7 @@ export async function seedGuestEvent(
     timeZone: GUEST_TIME_ZONE,
     themeKey: 'deckle-and-deboss',
     state,
-    content: GUEST_CONTENT,
+    content: options.content ?? GUEST_CONTENT,
     ...(options.publishContent === undefined ? {} : { publishContent: options.publishContent }),
     ...(options.ownerEmail === undefined ? {} : { ownerEmail: options.ownerEmail }),
     ...(options.questions === undefined ? {} : { questions: options.questions }),

@@ -2,6 +2,10 @@ node_modules/
 .next/
 .env*.local
 .vercel
+# The local object store. Uploaded bytes are content addressed and reproducible
+# from a seed, so nothing here is worth committing.
+.uploads/
+
 test-results/
 playwright-report/
 

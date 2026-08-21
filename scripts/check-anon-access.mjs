@@ -38,6 +38,7 @@ const TABLES = [
   'rsvp_questions',
   'rsvp_answers',
   'activation_codes',
+  'uploads',
 ]
 
 function resolveConfig() {
@@ -144,7 +145,14 @@ const svc = { key: config.serviceKey }
 const anon = { key: config.anonKey }
 
 const stamp = Date.now().toString(36)
-const created = { users: [], template: null, event: null, question: null, rsvp: null }
+const created = {
+  users: [],
+  template: null,
+  event: null,
+  question: null,
+  rsvp: null,
+  upload: null,
+}
 
 async function seed() {
   const owner = await auth('admin/users', {
@@ -236,6 +244,36 @@ async function seed() {
   const rsvp = await rest(`rsvps?id=eq.${stored.json.rsvp_id}&select=*`, svc)
   if (!rsvp.ok) throw new Error(`reading back the rsvp failed: ${describe(rsvp)}`)
   created.rsvp = rsvp.json[0]
+
+  // One uploaded asset, so the probes below are made against a row that really
+  // exists rather than against an empty table.
+  const upload = await rest('uploads', {
+    ...svc,
+    method: 'POST',
+    prefer: 'return=representation',
+    body: {
+      owner_id: owner.id,
+      event_id: created.event.id,
+      kind: 'image',
+      bytes: 400000,
+      content_type: 'image/jpeg',
+      sha256: `\\x${'ab'.repeat(32)}`,
+      original_key: 'abcdef012345abcdef012345-orig.jpg',
+      variants: [
+        {
+          label: 'w960',
+          key: 'abcdef012345abcdef012345-w960.webp',
+          content_type: 'image/webp',
+          bytes: 120000,
+          width: 960,
+          height: 640,
+        },
+      ],
+      variant_bytes: 120000,
+    },
+  })
+  if (!upload.ok) throw new Error(`seeding upload failed: ${describe(upload)}`)
+  created.upload = upload.json[0]
 
   const strangerSession = await auth('token?grant_type=password', {
     key: config.anonKey,
@@ -372,6 +410,36 @@ async function main() {
   })
   check('anon cannot insert an answer directly', !anonInsertAnswer.ok, describe(anonInsertAnswer))
 
+  const anonInsertUpload = await rest('uploads', {
+    ...anon,
+    method: 'POST',
+    body: {
+      owner_id: owner.id,
+      event_id: created.event.id,
+      kind: 'image',
+      bytes: 1000,
+      content_type: 'image/jpeg',
+      sha256: `\\x${'cd'.repeat(32)}`,
+      original_key: 'ffffff000000ffffff000000-orig.jpg',
+      variants: [
+        {
+          label: 'w960',
+          key: 'ffffff000000ffffff000000-w960.webp',
+          content_type: 'image/webp',
+          bytes: 500,
+          width: 960,
+          height: 640,
+        },
+      ],
+      variant_bytes: 500,
+    },
+  })
+  check(
+    'anon cannot put anything in the object store by writing a row that points at it',
+    !anonInsertUpload.ok,
+    describe(anonInsertUpload)
+  )
+
   // The reply path itself. It runs as the service role from an API route, and a
   // guest reaching PostgREST with the publishable key must not be able to call
   // it: that would be an unrated, unvalidated write path with no honeypot.
@@ -396,6 +464,29 @@ async function main() {
 
   const anonDeleteRsvp = await rest(`rsvps?id=eq.${created.rsvp.id}`, { ...anon, method: 'DELETE' })
   check('anon cannot delete an RSVP', !anonDeleteRsvp.ok, describe(anonDeleteRsvp))
+
+  const anonDisable = await rest('rpc/disable_upload', {
+    ...anon,
+    method: 'POST',
+    body: { p_upload_id: created.upload.id, p_reason: 'written by anon' },
+  })
+  check('anon cannot take an asset down', !anonDisable.ok, describe(anonDisable))
+
+  // The queue decides which bytes get removed. A stranger who could add to it
+  // could aim a deletion; one who could drain it could learn every key.
+  const anonQueue = await rest('rpc/queue_upload_object', {
+    ...anon,
+    method: 'POST',
+    body: { p_key: 'abcdef012345abcdef012345-w960.webp' },
+  })
+  check('anon cannot queue an object for deletion', !anonQueue.ok, describe(anonQueue))
+
+  const anonClaim = await rest('rpc/claim_upload_objects', {
+    ...anon,
+    method: 'POST',
+    body: { p_limit: 10 },
+  })
+  check('anon cannot read the object deletion queue', !anonClaim.ok, describe(anonClaim))
 
   const anonRetention = await rest('rpc/run_retention_sweep', { ...anon, method: 'POST', body: {} })
   check('anon cannot call the retention sweep', !anonRetention.ok, describe(anonRetention))
@@ -430,6 +521,7 @@ async function main() {
     'templates',
     'event_content',
     'activation_codes',
+    'uploads',
   ]) {
     const result = await rest(`${table}?select=*`, { key: config.anonKey, token: strangerToken })
     check(
