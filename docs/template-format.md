@@ -5,8 +5,9 @@ and eventually the guided form and anything resembling a marketplace all inherit
 its shape, and it is the thing that is most expensive to change once real events
 exist in production.
 
-Code is in `src/lib/template/`. Seed files are in `templates/`. Nothing here
-renders anything: that is the next task.
+Code is in `src/lib/template/`. Seed files are in `templates/`. Nothing in that
+directory renders anything: the block set that does is `docs/blocks.md`, and the
+guided form that writes content is `docs/editing.md`.
 
 ## Three documents, not one
 
@@ -17,13 +18,13 @@ renders anything: that is the next task.
 | content    | `event_content.content`                  | the buyer's overrides, keyed by block id, and the envelope  |
 
 ```jsonc
-// definition, at version 4 since it gained the envelope
-{ "version": 4, "envelope": { ... }, "blocks": [{ "id": "hero", "type": "hero", "config": { ... } }] }
+// definition, at version 5 since every picture in it became one shape
+{ "version": 5, "envelope": { ... }, "blocks": [{ "id": "hero", "type": "hero", "config": { ... } }] }
 
 // theme, at version 2 since the type scale gained a font per role
 { "version": 2, "tokens": { "color": {...}, "font": {...}, "typeScale": {...}, "space": {...}, "radius": {...} } }
 
-// content, at version 2 for the same reason the definition is at 4
+// content, at version 2 since it gained an envelope override
 { "version": 2, "blocks": { "hero": { "headline": "Priya & Alex" } }, "envelope": { ... } }
 ```
 
@@ -115,6 +116,18 @@ read those custom properties and nothing else, which is what makes "no hardcoded
 colour, font, radius or spacing value inside a block" a rule that can be
 followed rather than a rule that gets apologised for.
 
+## Metadata for the guided form
+
+Some schemas carry `.meta({ control: ... })`, and nothing in the format itself
+reads it. It is what `src/lib/editor/fields.ts` uses to pick a control that
+structure alone cannot pick: `httpsUrlSchema` and a headline are both bounded
+strings, and a picture is one thing a buyer swaps rather than an address and a
+list of widths. Text schemas may also carry a label, as a Zod description.
+
+Both live on the schema so they travel with the format rather than in a table
+beside it, and both are optional: a field nobody labelled still gets a form, and
+a field with no `control` is drawn from its shape. See `docs/editing.md`.
+
 ## The five v1 blocks
 
 `hero`, `details`, `countdown`, `map`, `rsvp-form`. Five, and no more.
@@ -132,15 +145,34 @@ item needs the date it writes `"source": "event-date"` instead, from a closed
 enum. There is deliberately no expression language: `{{event.date}}` in a buyer
 editable document is how a template becomes a sandbox.
 
-### Pictures: `hero.image` and `hero.artwork`
+### Pictures: one shape, two kinds
 
-Two picture fields on one block, because they are two kinds of thing and the
-difference decides how each is drawn.
+Every picture in the format is `{ src, widths? }`, built by one of two factories
+in `primitives.ts`, and the pair differ by exactly one thing:
 
-| Field     | Is         | Alt text         | Drawn as                                |
-| --------- | ---------- | ---------------- | --------------------------------------- |
-| `image`   | content    | required         | a photo inside the reading column       |
-| `artwork` | decoration | none, and no key | a full width band above everything else |
+| Factory             | Is         | Alt text         | Where it is used                            |
+| ------------------- | ---------- | ---------------- | ------------------------------------------- |
+| `contentPicture`    | content    | required         | `hero.image`, a photo in the reading column |
+| `decorativePicture` | decoration | none, and no key | `hero.artwork`, `envelope.image`            |
+
+`src` is the SMALLEST stored width, because it is what a browser too old to read
+`srcset` fetches and that browser is on the slowest phone in the room. `widths`
+names every stored width, because an upload is re-encoded to more than one and a
+shape that could name only one of them would leave the rest stored, counted
+against the event's variant budget, and never served. Each width is a separate
+content address, so they cannot be derived from one another.
+
+A picture may be an https URL or an app served path, which is what an upload is
+named by: `/a/<key>`, with no hostname, because the hostname is a property of the
+deployment and is applied at render time. That was true of `artwork` and the
+envelope from the start, and true of `hero.image` from version 5 (before it, the
+one picture a buyer most wants to add from their phone was the one field the
+upload capability could not fill).
+
+Both factories tag the object with `.meta({ control: 'picture', uploadKind })`.
+That is metadata for the guided form rather than validation, and it sits on the
+object rather than on `src` because swapping a picture changes its address and
+every width together. See `docs/editing.md`.
 
 `artwork` is what makes the top of a page read as an invitation. It has no alt
 key at all, and that absence is the design: the block draws it with `alt=""`, so
@@ -257,13 +289,13 @@ decision made with evidence rather than the same afternoon.
 
 ## What is validated when
 
-| When                        | What runs                                  | On failure                               |
-| --------------------------- | ------------------------------------------ | ---------------------------------------- |
-| authoring a seed file       | `tests/unit/template/seed.test.ts`         | the pull request goes red                |
-| a buyer saves               | `pipeline.load(input, { migrate: false })` | 422 with field paths, nothing is written |
-| a guest page renders        | `resolveEventPage(...)`                    | see the table below                      |
-| every committed theme       | `tests/unit/template/contrast.test.ts`     | the pull request goes red                |
-| the database, independently | check constraints from Phase 0.2           | the insert fails                         |
+| When                        | What runs                                      | On failure                                       |
+| --------------------------- | ---------------------------------------------- | ------------------------------------------------ |
+| authoring a seed file       | `tests/unit/template/seed.test.ts`             | the pull request goes red                        |
+| a buyer saves               | `checkContent` in `src/lib/editor/document.ts` | the field paths are named and nothing is written |
+| a guest page renders        | `resolveEventPage(...)`                        | see the table below                              |
+| every committed theme       | `tests/unit/template/contrast.test.ts`         | the pull request goes red                        |
+| the database, independently | check constraints from Phase 0.2               | the insert fails                                 |
 
 Content cannot be fully validated on its own: it does not know which block types
 its ids point at, and only the definition knows that. So the content pipeline

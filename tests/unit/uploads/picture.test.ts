@@ -1,7 +1,7 @@
 /**
  * The join between an uploaded envelope and the page that draws it.
  *
- * `envelopeImageFromUpload` is the one place that knows both shapes, so this is
+ * `pictureFromUpload` is the one place that knows both shapes, so this is
  * where the two halves are held together. The assertion that earns this file is
  * the third describe: what the producer returns is parsed by the format's own
  * `envelopeConfigSchema`. Without it the two could drift apart, each half would
@@ -12,14 +12,14 @@
 import { describe, expect, it } from 'vitest'
 
 import { envelopeConfigSchema } from '@/lib/template'
-import { UPLOAD_KIND_SPECS, envelopeImageFromUpload, isAssetKey } from '@/lib/uploads'
+import { UPLOAD_KIND_SPECS, pictureFromUpload, isAssetKey } from '@/lib/uploads'
 
 /** Keys shaped the way `contentAddress` makes them: 24 hex, a label, an extension. */
 const SMALL = { key: 'aaaaaaaaaaaaaaaaaaaaaaaa-w800.webp', width: 800 }
 const LARGE = { key: 'bbbbbbbbbbbbbbbbbbbbbbbb-w1600.webp', width: 1600 }
 
 describe('what an envelope upload becomes', () => {
-  const content = envelopeImageFromUpload([LARGE, SMALL])
+  const content = pictureFromUpload([LARGE, SMALL])
 
   it('names every stored width, so nothing is stored and never served', () => {
     expect(content?.widths).toEqual([
@@ -43,7 +43,7 @@ describe('what an envelope upload becomes', () => {
   })
 
   it('offers no candidate list when there is only one file to offer', () => {
-    expect(envelopeImageFromUpload([SMALL])).toEqual({
+    expect(pictureFromUpload([SMALL])).toEqual({
       src: '/a/aaaaaaaaaaaaaaaaaaaaaaaa-w800.webp',
     })
   })
@@ -51,10 +51,8 @@ describe('what an envelope upload becomes', () => {
   it('refuses rather than throws when nothing in it has a width', () => {
     // Reachable the moment somebody hands this the audio kind, whose one
     // variant is stored as it arrived and has no width at all.
-    expect(envelopeImageFromUpload([{ key: 'cccccccccccccccccccccccc.mp3', width: null }])).toBe(
-      null
-    )
-    expect(envelopeImageFromUpload([])).toBe(null)
+    expect(pictureFromUpload([{ key: 'cccccccccccccccccccccccc.mp3', width: null }])).toBe(null)
+    expect(pictureFromUpload([])).toBe(null)
   })
 })
 
@@ -68,7 +66,7 @@ describe('the widths the capability actually produces', () => {
   const planned = UPLOAD_KIND_SPECS.envelope.variants
 
   it('all fit in one content document', () => {
-    const content = envelopeImageFromUpload(
+    const content = pictureFromUpload(
       planned.map((variant, index) => ({
         key: `${'0'.repeat(23)}${index}-${variant.label}.webp`,
         width: variant.width ?? null,
@@ -83,7 +81,7 @@ describe('the widths the capability actually produces', () => {
 describe('the format accepts it', () => {
   it('parses as the envelope image the cover draws', () => {
     const parsed = envelopeConfigSchema.safeParse({
-      image: envelopeImageFromUpload([LARGE, SMALL]),
+      image: pictureFromUpload([LARGE, SMALL]),
     })
 
     expect(parsed.success).toBe(true)
@@ -91,8 +89,6 @@ describe('the format accepts it', () => {
   })
 
   it('still parses in its one width form', () => {
-    expect(
-      envelopeConfigSchema.safeParse({ image: envelopeImageFromUpload([LARGE]) }).success
-    ).toBe(true)
+    expect(envelopeConfigSchema.safeParse({ image: pictureFromUpload([LARGE]) }).success).toBe(true)
   })
 })

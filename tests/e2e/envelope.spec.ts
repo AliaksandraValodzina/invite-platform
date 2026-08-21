@@ -5,7 +5,7 @@ import { expect, test, type Page } from '@playwright/test'
 
 import { parseHex } from '../../src/lib/template/contrast'
 import { themePipeline, type ThemeTokens } from '../../src/lib/template/theme'
-import { envelopeImageFromUpload } from '@/lib/uploads'
+import { pictureFromUpload } from '@/lib/uploads'
 import { signIn } from '../support/auth'
 import { GUEST_CONTENT, seedGuestEvent } from '../support/events'
 import { distinctPhotograph, upload } from '../support/uploads'
@@ -318,7 +318,7 @@ test.describe("a buyer's own envelope, through the real upload capability", () =
    *
    * Nothing here fabricates a path. Bytes go to `POST /api/uploads` as a signed
    * in buyer under the `envelope` kind, the capability sniffs, re-encodes and
-   * content addresses them, `envelopeImageFromUpload` turns the variants it
+   * content addresses them, `pictureFromUpload` turns the variants it
    * stored into the exact content the format accepts, and a guest opens a page
    * that names them. Every link in that chain is the shipping one, which is the
    * difference between this and an assertion that a string appears in an
@@ -356,7 +356,7 @@ test.describe("a buyer's own envelope, through the real upload capability", () =
 
     expect(stored.status, stored.message).toBe(201)
 
-    const image = envelopeImageFromUpload(stored.variants ?? [])
+    const image = pictureFromUpload(stored.variants ?? [])
     expect(image, 'the capability stored no width to draw').not.toBeNull()
 
     const event = await seedGuestEvent('live', {

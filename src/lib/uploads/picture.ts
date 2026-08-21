@@ -1,18 +1,24 @@
 /**
- * What an `envelope` kind upload becomes on a page.
+ * What an image upload becomes on a page.
  *
- * This is the join between the two halves of "a buyer can upload their own
- * envelope". `POST /api/uploads` takes the bytes, re-encodes them and hands
- * back a set of stored variants; `content.envelope.image` in the template
- * format is what the cover draws. Neither half should know the other's shape,
- * and without something in the middle each caller would invent its own
- * conversion and they would disagree about which variant is the fallback.
+ * This is the join between the two halves of "a buyer can put their own picture
+ * on their invitation". `POST /api/uploads` takes the bytes, re-encodes them
+ * and hands back a set of stored variants; a picture field in the template
+ * format is what a block draws. Neither half should know the other's shape, and
+ * without something in the middle each caller would invent its own conversion
+ * and they would disagree about which variant is the fallback.
+ *
+ * One function for every picture in the format, because the format has one
+ * picture shape: `decorativePicture` and `contentPicture` in
+ * src/lib/template/primitives.ts differ only by whether alt text comes with
+ * them, and alt is the buyer's words rather than anything an upload knows. So
+ * this returns `{ src, widths }` and a caller adds alt where the field has one.
  *
  * It lives under `uploads` rather than under `template` on purpose. The
  * template format is a document format and knows nothing about object stores,
  * content addressing or variant labels; uploads already knows all three. So the
  * dependency points this way, this module imports nothing from the format, and
- * `tests/unit/uploads/envelope.test.ts` parses what it returns with
+ * `tests/unit/uploads/picture.test.ts` parses what it returns with
  * `envelopeConfigSchema` so the two cannot drift apart silently. That is the
  * same arrangement `kinds.ts` has with the migration that carries the same
  * numbers.
@@ -38,15 +44,15 @@ export type StoredVariant = {
   readonly width?: number | null
 }
 
-/** Exactly the shape of `image` in `envelopeConfigSchema`. */
-export type EnvelopeImageContent = {
+/** Exactly the shape a picture field in the template format holds, minus alt. */
+export type PictureContent = {
   readonly src: string
   readonly widths?: readonly { readonly src: string; readonly width: number }[]
 }
 
 /**
- * The content patch for a buyer's uploaded envelope, or null if there is
- * nothing renderable in what was passed.
+ * The content for a buyer's uploaded picture, or null if there is nothing
+ * renderable in what was passed.
  *
  * Null rather than a throw because the caller is a request path and the answer
  * "this upload has no width, so it is not a picture" is a refusal to write
@@ -59,9 +65,7 @@ export type EnvelopeImageContent = {
  * browser is on the slowest phone in the room. Everything else is offered
  * through `widths` and the browser picks.
  */
-export function envelopeImageFromUpload(
-  variants: readonly StoredVariant[]
-): EnvelopeImageContent | null {
+export function pictureFromUpload(variants: readonly StoredVariant[]): PictureContent | null {
   const candidates = variants
     .flatMap((variant) =>
       typeof variant.width === 'number' && variant.width > 0

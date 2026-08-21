@@ -167,9 +167,9 @@ Storing bytes is half of a use. The other half is a document naming them, and
 each kind names them differently: a photo goes in a block's content, the music
 file will name one key, and the envelope is the cover the guest opens first.
 
-Only the envelope half exists so far, and it is `envelopeImageFromUpload` in
-`src/lib/uploads/envelope.ts`. It takes the variants an ingest stored and
-returns exactly the `image` object `envelopeConfigSchema` accepts:
+One function serves every picture in the format, and it is `pictureFromUpload`
+in `src/lib/uploads/picture.ts`. It takes the variants an ingest stored and
+returns exactly the `{ src, widths }` every picture field in the format holds:
 
 ```jsonc
 {
@@ -194,17 +194,29 @@ fetches, and that browser is on the slowest phone in the room.
 **Keys, never URLs.** The hostname is applied at render time by
 `resolveAssetSrc`, for the reason in "Which hostname" above.
 
+Alt text is not here, and that is the split the format makes rather than an
+omission: `contentPicture` carries alt because a photograph means something, and
+alt is the buyer's words rather than anything an upload knows. The caller adds
+it where the field has one.
+
 It lives here rather than under `src/lib/template/` because the format knows
 nothing about object stores, content addressing or variant labels, and this
 module already knows all three. The dependency points one way and it imports
-nothing from the format; `tests/unit/uploads/envelope.test.ts` parses what it
+nothing from the format; `tests/unit/uploads/picture.test.ts` parses what it
 returns with the format's own schema, which is the same arrangement `kinds.ts`
 has with the migration carrying the same numbers.
 
-What does not exist yet is the buyer interface that calls it. There is no guided
-form in Phase 0, so nothing in the product performs the upload on a buyer's
-behalf. Every layer under that is shipping, and `tests/e2e/envelope.spec.ts`
-walks the whole chain over HTTP.
+The buyer interface that calls it is the guided form (`docs/editing.md`). It
+sends the file on its own, before the save, and the form then carries the id of
+the upload row rather than the address: an address in a form is an address a
+browser can choose, and writing whatever `/a/<key>` it was handed into a buyer's
+document would leave `claim_upload_objects` counting a reference nobody can see.
+The server reads the row back as that buyer instead, so row level security is
+what says the upload is theirs.
+
+`tests/e2e/envelope.spec.ts` walks the chain over HTTP and
+`tests/e2e/editing.spec.ts` walks it from the buyer's side, ending on the
+`srcset` a guest is served.
 
 ## Retention, and the half Postgres cannot do
 

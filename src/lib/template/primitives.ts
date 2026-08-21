@@ -46,7 +46,17 @@ export const hexColourSchema = z
  * https only, for every URL anywhere in the format. `javascript:` and `data:`
  * are the reason, and mixed content warnings on a guest page are the other one.
  */
-export const httpsUrlSchema = z.string().max(2048).superRefine(checkHttpsUrl)
+export const httpsUrlSchema = z
+  .string()
+  .max(2048)
+  .superRefine(checkHttpsUrl)
+  /*
+   * Metadata, not validation. `control` is the one thing the guided form reads
+   * out of this format that a JSON Schema cannot say on its own: two fields can
+   * both be "a string with a ceiling" and still need different controls in
+   * front of a buyer. See src/lib/editor/fields.ts.
+   */
+  .meta({ control: 'url' })
 
 function checkHttpsUrl(value: string, ctx: z.RefinementCtx): void {
   let parsed: URL
@@ -124,17 +134,122 @@ export const imageSourceSchema = z
     }
   })
 
-/** Required visible text with a hard ceiling, so no field can become a document. */
-export function text(max: number) {
-  return z.string().trim().min(1).max(max)
+/**
+ * One stored width of one picture: an address, and how wide the file at it is.
+ *
+ * Each width is a separate content address, so they cannot be derived from one
+ * another and every one has to be named. See src/lib/uploads/address.ts.
+ */
+export const pictureWidthSchema = z.strictObject({
+  src: imageSourceSchema,
+  /** CSS pixels of the stored file, which is the `w` descriptor in a srcset. */
+  width: z.number().int().positive().max(8000),
+})
+
+const pictureShape = {
+  /**
+   * What a browser fetches when it does not read `srcset`, so it is the
+   * SMALLEST stored width rather than the largest. An old phone that ignores
+   * `srcset` is the one device that must not be handed 1600px.
+   *
+   * `/a/<key>` is the form an upload is named by. It carries no hostname,
+   * because the hostname is a property of the deployment and is applied at
+   * render time by `resolveAssetSrc`. See src/lib/uploads/host.ts.
+   */
+  src: imageSourceSchema,
+  /**
+   * Every stored width of the same picture, which is what lets a block emit a
+   * real `srcset` instead of sending one size to every guest.
+   *
+   * It exists because the upload capability already produces more than one:
+   * `UPLOAD_KIND_SPECS` re-encodes an image at three widths and an envelope at
+   * two, and a content shape that could name only one of them would leave the
+   * rest stored, counted against the event's variant budget, and never served.
+   *
+   * Absent means the one `src` is all there is, which is what an https URL
+   * somebody pasted looks like.
+   */
+  widths: z.array(pictureWidthSchema).min(1).max(4).optional(),
+} as const
+
+/**
+ * The two upload kinds a picture slot can be filled from.
+ *
+ * A slot says which because the capability re-encodes them differently and for
+ * a stated reason: a photograph in the reading column is stored at 480, 960 and
+ * 1600, and a cover drawn full bleed is stored at 800 and 1600 because the
+ * smallest photo width would be visibly soft across a whole screen
+ * (src/lib/uploads/kinds.ts).
+ *
+ * It is a bare string here and this module imports nothing from `uploads`, so
+ * the format stays a document format. What it names is a property of the slot,
+ * not of the object store: "this is a picture drawn across the page" is a fact
+ * about the design, and the storage schedule follows from it rather than the
+ * other way round.
+ */
+export type PictureSlot = 'image' | 'envelope'
+
+function pictureMeta(label: string | undefined, slot: PictureSlot) {
+  /*
+   * `control: 'picture'` is what tells the guided form that these keys are one
+   * thing a buyer swaps rather than three fields they fill in. It has to sit on
+   * the OBJECT and not on `src`, because swapping the picture changes `src` and
+   * `widths` together: a control that owned only the address would leave a
+   * srcset pointing at the picture that was just replaced.
+   */
+  return {
+    control: 'picture',
+    uploadKind: slot,
+    ...(label === undefined ? {} : { description: label }),
+  }
+}
+
+/**
+ * A picture that is decoration: it says nothing the page does not already say
+ * in words, so it carries no alt text and there is nowhere to put any.
+ *
+ * The absence is the design. Nobody should ever be asked to transcribe words
+ * baked into a picture, and a block draws one of these with `alt=""`.
+ */
+export function decorativePicture(label?: string, slot: PictureSlot = 'image') {
+  return z.strictObject(pictureShape).meta(pictureMeta(label, slot))
+}
+
+/**
+ * A picture that is content: a photograph of the couple, which means something,
+ * and therefore carries alt text. Alt is required whenever there is a picture
+ * at all, because it is content rather than polish.
+ */
+export function contentPicture(label?: string, altLabel = 'Describe the photo') {
+  return z
+    .strictObject({ ...pictureShape, alt: text(160, altLabel) })
+    .meta(pictureMeta(label, 'image'))
+}
+
+/**
+ * Required visible text with a hard ceiling, so no field can become a document.
+ *
+ * The optional `label` is the words a buyer reads above this field in the
+ * guided form. It is a Zod description, which means it travels with the schema
+ * rather than living in a table the editor keeps beside it: a field that gains
+ * a label here gains it in the form, and a field that never gets one still gets
+ * a form, drawn under a label made from its key. That is the whole reason the
+ * editor can claim to be driven by the format. See src/lib/editor/fields.ts.
+ *
+ * It is written before `.optional()` and never after, because that is where
+ * `z.toJSONSchema` reads a description from for a property that may be absent.
+ */
+export function text(max: number, label?: string) {
+  const schema = z.string().trim().min(1).max(max)
+  return label === undefined ? schema : schema.describe(label)
 }
 
 /**
  * Optional visible text. Absent and empty are the same thing to a renderer, so
  * an empty string is rejected rather than quietly rendering an empty element.
  */
-export function optionalText(max: number) {
-  return text(max).optional()
+export function optionalText(max: number, label?: string) {
+  return text(max, label).optional()
 }
 
 /** Builds an object shape that maps every key in a fixed role list to one schema. */

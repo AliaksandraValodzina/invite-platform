@@ -289,7 +289,15 @@ function zoneFormatter(timeZone: string): Intl.DateTimeFormat {
  * that dodged the database trigger render a countdown that stops being correct
  * the next time the zone moves.
  */
-function isSupportedTimeZone(timeZone: string): boolean {
+/**
+ * Whether this runtime knows the zone.
+ *
+ * Exported because the editor has to refuse a zone a buyer typed with a
+ * sentence rather than letting `events_before_write` refuse it with a Postgres
+ * error, and a second implementation of "is this a real zone" is a second answer
+ * to the question the countdown depends on.
+ */
+export function isSupportedTimeZone(timeZone: string): boolean {
   if (!/^[A-Za-z]+(?:\/[A-Za-z0-9_+-]+)+$/.test(timeZone)) return false
 
   try {

@@ -32,18 +32,18 @@
 
 import { z } from 'zod'
 
-import { imageSourceSchema, optionalText } from './primitives'
+import { decorativePicture, optionalText } from './primitives'
 
 export const envelopeConfigSchema = z.strictObject({
   /** The line above the names. "You are invited", "Save the date". */
-  note: optionalText(80),
+  note: optionalText(80, 'Line on the cover'),
   /** The prompt that says the cover opens. The component has its own if this is absent. */
-  openLabel: optionalText(40),
+  openLabel: optionalText(40, 'Prompt to open'),
   /**
    * A picture of the envelope, replacing the one the block set draws from
    * tokens. This is what the buyer upload capability writes: an `envelope` kind
-   * upload becomes exactly this object, built by `envelopeImageFromUpload` in
-   * src/lib/uploads/envelope.ts.
+   * upload becomes exactly this object, built by `pictureFromUpload` in
+   * src/lib/uploads/picture.ts.
    *
    * It is the envelope, not a backdrop, and it carries no alt key for the same
    * reason `hero.artwork` carries none: it is decoration, it says nothing the
@@ -52,45 +52,7 @@ export const envelopeConfigSchema = z.strictObject({
    * cover's own words on top of a picture, and this repo's rule is that no text
    * has its contrast measured against an image. See docs/envelope.md.
    */
-  image: z
-    .strictObject({
-      /**
-       * What a browser fetches when it does not read `widths`, so it is the
-       * SMALLEST stored width rather than the largest. An old phone that
-       * ignores `srcset` is the one device that must not be handed 1600px.
-       *
-       * `/a/<key>` is the form an upload is named by. It carries no hostname,
-       * because the hostname is a property of the deployment and is applied at
-       * render time by `resolveAssetSrc`. See src/lib/uploads/host.ts.
-       */
-      src: imageSourceSchema,
-      /**
-       * Every stored width of the same picture, which is what lets the cover
-       * emit a real `srcset` instead of sending one size to every guest.
-       *
-       * It exists because the upload capability already produces more than one.
-       * `UPLOAD_KIND_SPECS.envelope` re-encodes an envelope to 800 and 1600
-       * CSS pixels; a content shape that could only name one of them would
-       * leave the other stored, counted against the event's variant budget,
-       * and never served. Each width is a separate content address, so they
-       * cannot be derived from one another and all of them have to be named.
-       *
-       * Absent means the one `src` is all there is, which is what an https URL
-       * somebody pasted looks like.
-       */
-      widths: z
-        .array(
-          z.strictObject({
-            src: imageSourceSchema,
-            /** CSS pixels of the stored file, which is the `w` descriptor. */
-            width: z.number().int().positive().max(8000),
-          })
-        )
-        .min(1)
-        .max(4)
-        .optional(),
-    })
-    .optional(),
+  image: decorativePicture('Envelope picture', 'envelope').optional(),
 })
 
 export type EnvelopeConfig = z.infer<typeof envelopeConfigSchema>

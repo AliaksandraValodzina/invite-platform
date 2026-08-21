@@ -63,6 +63,8 @@ export type BuyerResponse = {
   readonly ok: boolean
   readonly status: number
   readonly json: unknown
+  /** First 400 characters of the body, so a database refusal can be quoted. */
+  readonly detail: string
 }
 
 /**
@@ -75,14 +77,46 @@ export type BuyerResponse = {
  * than an error.
  */
 export async function buyerGet(session: BuyerSession, path: string): Promise<BuyerResponse> {
+  return buyerRequest(session, 'GET', path)
+}
+
+/**
+ * One PostgREST request as the buyer, in any verb.
+ *
+ * Writes go through here rather than through the service role, and that is the
+ * same decision the reads above make, for a stronger reason. A buyer editing
+ * their own invitation is exactly the case where "which event is this" must not
+ * be a `where` clause in application code: `owner_id = (select auth.uid())` on
+ * `event_content`, `events` and `rsvp_questions` is the check, it is forced, and
+ * a bug in this file can therefore write nothing rather than write into somebody
+ * else's wedding.
+ *
+ * `detail` comes back on a failure because the database is where the real
+ * refusal is written. A trigger saying "an event may ask at most 12 live RSVP
+ * questions" is a sentence a buyer can act on, and swallowing it in favour of
+ * "that could not be saved" would be throwing away the only useful part of the
+ * answer.
+ */
+export async function buyerRequest(
+  session: BuyerSession,
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+  path: string,
+  options: { readonly body?: unknown; readonly prefer?: string } = {}
+): Promise<BuyerResponse> {
   const config = readAuthConfig()
 
+  const headers: Record<string, string> = {
+    apikey: config.anonKey,
+    Authorization: `Bearer ${session.accessToken}`,
+    Accept: 'application/json',
+  }
+  if (options.body !== undefined) headers['Content-Type'] = 'application/json'
+  if (options.prefer !== undefined) headers.Prefer = options.prefer
+
   const response = await fetch(`${config.url}/rest/v1/${path}`, {
-    headers: {
-      apikey: config.anonKey,
-      Authorization: `Bearer ${session.accessToken}`,
-      Accept: 'application/json',
-    },
+    method,
+    headers,
+    ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
     cache: 'no-store',
   })
 
@@ -94,7 +128,7 @@ export async function buyerGet(session: BuyerSession, path: string): Promise<Buy
     /* not JSON */
   }
 
-  return { ok: response.ok, status: response.status, json }
+  return { ok: response.ok, status: response.status, json, detail: text.slice(0, 400) }
 }
 
 // The buyer's events ---------------------------------------------------------
