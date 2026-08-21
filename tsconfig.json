@@ -1,7 +1,17 @@
 {
+  // The formatting of this file is Next.js's own, not Prettier's: every array
+  // element on its own line. `next dev` maintains this file and rewrites all of
+  // it whenever it changes one thing, so matching its serializer is what keeps a
+  // dev server from leaving an uncommitted whole-file reformat behind. Prettier
+  // is told to skip it in .prettierignore, and
+  // tests/unit/toolchain/tsconfig-shape.test.ts holds both halves.
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["dom", "dom.iterable", "ES2022"],
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "ES2022"
+    ],
     "module": "esnext",
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
@@ -22,7 +32,9 @@
       }
     ],
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": [
+        "./src/*"
+      ]
     },
     "strict": true,
     "noUncheckedIndexedAccess": true,
@@ -42,5 +54,8 @@
     "*.config.mts",
     ".next/dev/types/**/*.ts"
   ],
-  "exclude": ["node_modules", ".next"]
+  "exclude": [
+    "node_modules",
+    ".next"
+  ]
 }

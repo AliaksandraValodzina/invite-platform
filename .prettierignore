@@ -10,3 +10,9 @@ next-env.d.ts
 AGENTS.md
 CLAUDE.md
 .claude/
+
+# Next.js maintains tsconfig.json and rewrites the whole file when it changes
+# one thing in it, in its own formatting. The file is committed in that shape so
+# a dev server has nothing to rewrite, which means Prettier has to keep its
+# hands off it or the two would take turns reformatting it forever.
+tsconfig.json
