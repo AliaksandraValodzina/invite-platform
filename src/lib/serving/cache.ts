@@ -35,6 +35,12 @@
  * set in `src/proxy.ts`, and `tests/e2e/caching.spec.ts`, which reads the header
  * off the wire.
  *
+ * A route only reaches that path at all if it exports `generateStaticParams`.
+ * Without one, Next renders every request fresh and streams it, and what comes
+ * off the wire is `private, no-store` however confident the `revalidate` export
+ * looks. Measured on a production build for both `/e/[slug]` and
+ * `/t/[templateId]`.
+ *
  * The dashboard's header is the opposite decision, made for the same reason.
  * That page is a list of other people's names, contact details and dietary
  * requirements, assembled for one signed-in buyer. Nothing between the database
@@ -54,6 +60,33 @@ export const GUEST_PAGE_CACHE_CONTROL = [
   'max-age=0',
   `s-maxage=${GUEST_PAGE_REVALIDATE_SECONDS}`,
   `stale-while-revalidate=${GUEST_PAGE_STALE_WHILE_REVALIDATE_SECONDS}`,
+  'must-revalidate',
+].join(', ')
+
+/**
+ * The template preview, which is the one page here meant to be shared widely
+ * and the one that carries nothing about anybody.
+ *
+ * It renders a design and its example words. There is no couple, no date
+ * somebody chose, no guest and no reply, so none of the reasoning above applies
+ * and the only question is how long an edit to a template takes to reach a shop
+ * listing. Five minutes.
+ *
+ * The explicit `stale-while-revalidate` is the reason this is written out
+ * rather than left to Next. A dynamic route with `revalidate` set gets a
+ * default stale window of nearly a year, which would mean a design corrected on
+ * Monday still being shown to shoppers in the spring. Five minutes fresh and an
+ * hour stale is a bound somebody chose.
+ */
+export const TEMPLATE_PREVIEW_REVALIDATE_SECONDS = 300
+
+export const TEMPLATE_PREVIEW_STALE_WHILE_REVALIDATE_SECONDS = 3600
+
+export const TEMPLATE_PREVIEW_CACHE_CONTROL = [
+  'public',
+  'max-age=0',
+  `s-maxage=${TEMPLATE_PREVIEW_REVALIDATE_SECONDS}`,
+  `stale-while-revalidate=${TEMPLATE_PREVIEW_STALE_WHILE_REVALIDATE_SECONDS}`,
   'must-revalidate',
 ].join(', ')
 

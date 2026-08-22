@@ -2,7 +2,7 @@
 
 import { useActionState } from 'react'
 
-import type { SaveResult } from '@/lib/editor/result'
+import { CONFIRM_FIELD, CONFIRM_REPLAY_FIELD, type SaveResult } from '@/lib/editor/result'
 
 /**
  * A form that reports what happened to it.
@@ -20,6 +20,20 @@ import type { SaveResult } from '@/lib/editor/result'
  * The form still works without JavaScript. React posts it as a normal form,
  * the action runs, and the page comes back rendered from the saved row; what is
  * lost with no JavaScript is the message, not the save.
+ *
+ * ## The confirmation
+ *
+ * A `confirm` result means nothing was written and a question is being asked:
+ * this save moves a detail guests have already acted on, and this many people
+ * have replied. It is a confirmation and never a block, so the panel below has a
+ * button that goes ahead with exactly what was submitted.
+ *
+ * The panel states the change as from and to rather than pointing at the
+ * controls above, and that is not decoration. React resets an uncontrolled form
+ * after an action returns, so by the time this renders, the date in the field
+ * has snapped back to the stored one. What gets written is the hidden replay
+ * field, so the sentence in the panel is the accurate description of what the
+ * button does, and the field above is not.
  */
 
 export function SaveForm({
@@ -58,6 +72,49 @@ export function SaveForm({
           </p>
         )}
       </div>
+
+      {result.status === 'confirm' && (
+        <div
+          data-save-status="confirm"
+          role="alert"
+          className="flex flex-col gap-3 rounded border border-amber-300 bg-amber-50 p-4 text-sm"
+        >
+          <p data-testid="confirm-message" className="font-medium">
+            {result.message}
+          </p>
+
+          <ul data-testid="confirm-changes" className="flex flex-col gap-1">
+            {result.changes.map((change) => (
+              <li key={change.label}>
+                {change.label} changes from <strong>{change.from}</strong> to{' '}
+                <strong>{change.to}</strong>.
+              </li>
+            ))}
+          </ul>
+
+          <p className="text-slate-700">
+            Nothing has been changed yet, and nobody is told either way. Telling your guests is
+            still yours to do.
+          </p>
+
+          {/*
+           * The submitted form, carried whole in one field so that confirming
+           * writes what was asked about rather than what the controls above
+           * happen to say now. See src/lib/editor/result.ts.
+           */}
+          <input type="hidden" name={CONFIRM_REPLAY_FIELD} value={result.replay} />
+
+          <button
+            type="submit"
+            name={CONFIRM_FIELD}
+            value="yes"
+            disabled={pending}
+            className="self-start rounded bg-amber-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+          >
+            Change it anyway
+          </button>
+        </div>
+      )}
 
       {result.status === 'failed' && result.issues.length > 0 && (
         <ul data-save-issues="" className="flex flex-col gap-1 rounded bg-red-50 p-3 text-sm">

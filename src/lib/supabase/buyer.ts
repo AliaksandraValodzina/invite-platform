@@ -65,6 +65,15 @@ export type BuyerResponse = {
   readonly json: unknown
   /** First 400 characters of the body, so a database refusal can be quoted. */
   readonly detail: string
+  /**
+   * Rows matching the filter, when `Prefer: count=exact` was asked for.
+   *
+   * Read off `Content-Range` rather than counted from the body, because the
+   * body is capped: `max_rows` in supabase/config.toml is 1000, so an event
+   * with more replies than that would be reported as having exactly 1000. The
+   * count the load bearing warning shows a buyer has to be the real one.
+   */
+  readonly count: number | null
 }
 
 /**
@@ -128,7 +137,22 @@ export async function buyerRequest(
     /* not JSON */
   }
 
-  return { ok: response.ok, status: response.status, json, detail: text.slice(0, 400) }
+  return {
+    ok: response.ok,
+    status: response.status,
+    json,
+    detail: text.slice(0, 400),
+    count: readCount(response.headers.get('content-range')),
+  }
+}
+
+/** `0-24/1200` or `*\/0`. Null when the header is absent or says `*`. */
+function readCount(header: string | null): number | null {
+  if (header === null) return null
+  const total = header.split('/')[1]
+  if (total === undefined || total === '*') return null
+  const parsed = Number(total)
+  return Number.isInteger(parsed) ? parsed : null
 }
 
 // The buyer's events ---------------------------------------------------------

@@ -16,7 +16,13 @@ import {
   type DocumentIssue,
 } from '@/lib/template'
 
-import { saveDetails, saveInvitation, saveQuestions } from './actions'
+import {
+  publishInvitation,
+  saveDetails,
+  saveInvitation,
+  saveQuestions,
+  unpublishInvitation,
+} from './actions'
 
 /**
  * Where a buyer puts their own details on the invitation they bought.
@@ -57,10 +63,15 @@ const STATE_WORDS: Record<string, string> = {
   expired: 'Expired. The link shows a designed notice.',
 }
 
-type PageProps = { params: Promise<{ id: string }> }
+type PageProps = {
+  params: Promise<{ id: string }>
+  searchParams: Promise<Record<string, string | string[] | undefined>>
+}
 
-export default async function EditPage({ params }: PageProps) {
+export default async function EditPage({ params, searchParams }: PageProps) {
   const { id } = await params
+  const query = await searchParams
+  const justClaimed = query.claimed === '1'
 
   const buyer = await currentBuyer()
   if (buyer === null) redirect('/login')
@@ -71,7 +82,7 @@ export default async function EditPage({ params }: PageProps) {
   const definition = templateDefinitionPipeline.load(event.definition)
   if (!definition.ok) {
     return (
-      <Shell event={event}>
+      <Shell event={event} justClaimed={justClaimed}>
         <Problem
           title="This template could not be read"
           message={definition.message}
@@ -84,7 +95,7 @@ export default async function EditPage({ params }: PageProps) {
   const content = eventContentPipeline.load(event.content ?? EMPTY_EVENT_CONTENT)
   if (!content.ok) {
     return (
-      <Shell event={event}>
+      <Shell event={event} justClaimed={justClaimed}>
         {/*
          * Nothing is repaired here and nothing is offered as a form. What is
          * stored is still stored, exactly as it was written; a form built on a
@@ -105,10 +116,11 @@ export default async function EditPage({ params }: PageProps) {
   )
 
   return (
-    <Shell event={event}>
+    <Shell event={event} justClaimed={justClaimed}>
       <Details event={event} />
       <Invitation event={event} sections={sections} orphans={orphans} />
       <ReplyForm event={event} />
+      <Publication event={event} />
     </Shell>
   )
 }
@@ -360,13 +372,62 @@ function ReplyForm({ event }: { readonly event: EditableEvent }) {
   )
 }
 
+// Publishing ------------------------------------------------------------------
+
+/**
+ * The one control that decides whether guests can open the link.
+ *
+ * It is last on the page rather than first, and that is the order of the job: an
+ * invitation is filled in and then put up. It is also where the link is stated,
+ * because the link is what a buyer is about to paste into a group chat and the
+ * one thing on this page they cannot change afterwards.
+ */
+function Publication({ event }: { readonly event: EditableEvent }) {
+  const published = event.status === 'published'
+
+  return (
+    <section className="flex flex-col gap-4">
+      <div>
+        <h2 className="text-lg font-medium">Your link</h2>
+        <p data-testid="event-link" className="text-sm text-slate-600">
+          <code>/e/{event.slug}</code>
+        </p>
+        <p className="mt-1 text-sm text-slate-600">
+          {event.publishedAt === null
+            ? 'This link follows the title until you publish. After that it is fixed, because there is no way to reach the people already holding it.'
+            : 'This link is fixed. Changing it would break every share that has already gone out.'}
+        </p>
+      </div>
+
+      {published ? (
+        <SaveForm action={unpublishInvitation.bind(null, event.id)} submitLabel="Take it down">
+          <p data-testid="publication-state" className="text-sm text-slate-600">
+            Published. Anyone with the link can open it and reply. Taking it down replaces the
+            invitation with a notice; nothing already replied is lost.
+          </p>
+        </SaveForm>
+      ) : (
+        <SaveForm action={publishInvitation.bind(null, event.id)} submitLabel="Publish">
+          <p data-testid="publication-state" className="text-sm text-slate-600">
+            Not published. Anyone opening the link sees a notice instead of the invitation. Publish
+            when you are ready to share it.
+          </p>
+        </SaveForm>
+      )}
+    </section>
+  )
+}
+
 // Shell -----------------------------------------------------------------------
 
 function Shell({
   event,
+  justClaimed,
   children,
 }: {
   readonly event: EditableEvent
+  /** True on the redirect straight out of a claim link. See src/app/claim. */
+  readonly justClaimed: boolean
   readonly children: React.ReactNode
 }) {
   return (
@@ -383,6 +444,25 @@ function Shell({
           </Link>
         </p>
       </div>
+
+      {justClaimed && (
+        /*
+         * The first thing somebody sees after paying, and it has one job: say
+         * that the thing exists and that the date and names on it are ours
+         * rather than theirs. An event is created with a placeholder date and
+         * the template's example words (src/lib/activation/claim.ts), and a
+         * buyer who did not notice would publish somebody else's names.
+         */
+        <p
+          data-testid="just-claimed"
+          role="status"
+          className="rounded-md bg-green-50 p-4 text-sm text-green-900"
+        >
+          Your invitation is ready. Everything on it is still an example, including the date, so
+          work down the page and replace it. Nobody can open it until you publish.
+        </p>
+      )}
+
       {children}
     </main>
   )

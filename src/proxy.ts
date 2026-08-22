@@ -10,7 +10,11 @@ import {
   tokenExpiry,
 } from '@/lib/auth/session'
 import { readSiteConfig } from '@/lib/env'
-import { DASHBOARD_CACHE_CONTROL, GUEST_PAGE_CACHE_CONTROL } from '@/lib/serving/cache'
+import {
+  DASHBOARD_CACHE_CONTROL,
+  GUEST_PAGE_CACHE_CONTROL,
+  TEMPLATE_PREVIEW_CACHE_CONTROL,
+} from '@/lib/serving/cache'
 
 /**
  * The one thing that sets a cache header, and the one thing that keeps a
@@ -34,7 +38,8 @@ import { DASHBOARD_CACHE_CONTROL, GUEST_PAGE_CACHE_CONTROL } from '@/lib/serving
  * database and the buyer's screen.
  *
  * **The session.** An access token lasts an hour and a buyer checks their
- * replies for months, so most dashboard visits arrive with an expired one. The
+ * replies for months, so most dashboard and claim visits arrive with an expired
+ * one. The
  * exchange has to happen somewhere that can write a cookie, and a server
  * component cannot: Next only allows `cookies().set` in a route handler or a
  * server action. Doing it here costs one request to the auth API on the visits
@@ -47,19 +52,49 @@ import { DASHBOARD_CACHE_CONTROL, GUEST_PAGE_CACHE_CONTROL } from '@/lib/serving
  * explained as "just refresh".
  */
 
-export const config = { matcher: ['/e/:slug*', '/dashboard/:path*'] }
+export const config = {
+  matcher: ['/e/:slug*', '/dashboard/:path*', '/claim/:path*', '/t/:path*'],
+}
+
+/**
+ * `/claim/*` gets the same treatment as `/dashboard/*`, for both of its jobs.
+ *
+ * The session, because a buyer who claimed one invitation in March and clicks a
+ * second link in September arrives with an hour-old access token and a valid
+ * refresh token. Without the exchange here they would be treated as signed out
+ * and asked for their email again, which on a paid link reads as the purchase
+ * not being recognised.
+ *
+ * The header, because a claim URL carries a bearer token in its path and its
+ * response says whether that token is still worth anything. Neither belongs in
+ * a shared cache, and `private, no-store` is the same sentence the dashboard
+ * needs for a different reason.
+ */
+const SESSION_PATHS = ['/dashboard', '/claim']
 
 export async function proxy(request: NextRequest): Promise<NextResponse> {
-  if (request.nextUrl.pathname.startsWith('/dashboard')) {
-    return dashboard(request)
+  const path = request.nextUrl.pathname
+
+  if (SESSION_PATHS.some((prefix) => path.startsWith(prefix))) {
+    return signedIn(request)
   }
 
   const response = NextResponse.next()
-  response.headers.set('Cache-Control', GUEST_PAGE_CACHE_CONTROL)
+  /*
+   * `/t/*` is a template preview: a design and its example words, belonging to
+   * nobody and meant to spread. It is written out here rather than left to
+   * Next's own header for one reason, which is that Next's default stale window
+   * on a route like this is nearly a year. See TEMPLATE_PREVIEW_CACHE_CONTROL.
+   */
+  const isTemplatePreview = path === '/t' || path.startsWith('/t/')
+  response.headers.set(
+    'Cache-Control',
+    isTemplatePreview ? TEMPLATE_PREVIEW_CACHE_CONTROL : GUEST_PAGE_CACHE_CONTROL
+  )
   return response
 }
 
-async function dashboard(request: NextRequest): Promise<NextResponse> {
+async function signedIn(request: NextRequest): Promise<NextResponse> {
   const accessToken = request.cookies.get(ACCESS_COOKIE)?.value
   const refreshToken = request.cookies.get(REFRESH_COOKIE)?.value
 

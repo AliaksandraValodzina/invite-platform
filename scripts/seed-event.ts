@@ -164,6 +164,14 @@ function firstRow(value: unknown): Record<string, unknown> {
  * needs a real `auth.users` row. Creating one per event would spend the auth
  * API's rate limit on fixtures and fill the accounts table with users nobody
  * can log in as.
+ *
+ * The fallback asks the auth API for the one address rather than listing users
+ * and searching the page, and that is a fix rather than a tidy-up. Listing
+ * defaults to a page of users, so once a stack has accumulated more fixtures
+ * than fit on one page, a seed owner created weeks ago stops being found and
+ * every spec that shares it fails with "email_exists" while insisting the user
+ * does not exist. The browser suite creates a handful of accounts per run, so
+ * that ceiling arrives on a developer's machine rather than in CI.
  */
 export async function ensureOwner(config: SeedConfig, email: string): Promise<string> {
   const created = await fetch(`${config.url}/auth/v1/admin/users`, {
@@ -181,10 +189,15 @@ export async function ensureOwner(config: SeedConfig, email: string): Promise<st
     return user.id
   }
 
-  const listed = (await call(config, `/auth/v1/admin/users?per_page=200`)) as {
-    users?: { id: string; email: string }[]
-  }
-  const existing = listed.users?.find((user) => user.email === email)
+  const found = (await call(
+    config,
+    `/auth/v1/admin/users?per_page=20&filter=${encodeURIComponent(email)}`
+  )) as { users?: { id: string; email: string }[] }
+
+  // `filter` is a search rather than an equality test, so the address is
+  // matched here as well: a fixture at a@example.test must not be handed the
+  // account for aa@example.test.
+  const existing = found.users?.find((user) => user.email === email)
   if (existing === undefined) {
     throw new Error(`could not create or find the seed owner ${email}: ${await created.text()}`)
   }
@@ -248,25 +261,52 @@ export type SeededEvent = {
 
 export const DEFAULT_OWNER_EMAIL = 'seed-owner@example.test'
 
-export async function seedEvent(
-  input: SeedEventInput,
-  config: SeedConfig = resolveSeedConfig()
-): Promise<SeededEvent> {
-  const ownerId = await ensureOwner(config, input.ownerEmail ?? DEFAULT_OWNER_EMAIL)
+export type SeedTemplateInput = {
+  readonly ownerId: string
+  /** File name under templates/themes, without the extension. */
+  readonly themeKey: string
+  /** Defaults to the committed classic-invitation definition. */
+  readonly definition?: unknown
+  /** Distinguishes template rows when several are seeded for one owner. */
+  readonly key?: string
+}
 
+export type SeededTemplate = {
+  readonly id: string
+  readonly key: string
+  readonly ownerId: string
+  readonly definitionVersion: number
+}
+
+/**
+ * A published template row, and only that.
+ *
+ * Split out of `seedEvent` because activation needs a template with no event
+ * attached: a claim code names a template and creates the event itself, and the
+ * public preview at `/t/<id>` renders a template that no buyer has activated.
+ * One implementation, so a fixture for either cannot drift from the other.
+ *
+ * `on_conflict=owner_id,key` with `resolution=merge-duplicates`, so calling it
+ * twice for one owner updates the row rather than failing on
+ * `templates_owner_id_key_key`.
+ */
+export async function seedTemplate(
+  input: SeedTemplateInput,
+  config: SeedConfig = resolveSeedConfig()
+): Promise<SeededTemplate> {
   const definition =
     input.definition ?? readJsonFile('templates/definitions/classic-invitation.json')
   const theme = readJsonFile(`templates/themes/${input.themeKey}.json`)
   const definitionVersion = (definition as { version: number }).version
+  const key = input.key ?? `seed-${input.themeKey}`
 
-  const templateKey = input.templateKey ?? `seed-${input.themeKey}`
-  const template = firstRow(
+  const row = firstRow(
     await call(config, '/rest/v1/templates?on_conflict=owner_id,key', {
       method: 'POST',
       prefer: 'return=representation,resolution=merge-duplicates',
       body: {
-        owner_id: ownerId,
-        key: templateKey,
+        owner_id: input.ownerId,
+        key,
         name: `Seed template (${input.themeKey})`,
         status: 'published',
         definition_version: definitionVersion,
@@ -275,7 +315,26 @@ export async function seedEvent(
       },
     })
   )
-  const templateId = template.id as string
+
+  return { id: row.id as string, key, ownerId: input.ownerId, definitionVersion }
+}
+
+export async function seedEvent(
+  input: SeedEventInput,
+  config: SeedConfig = resolveSeedConfig()
+): Promise<SeededEvent> {
+  const ownerId = await ensureOwner(config, input.ownerEmail ?? DEFAULT_OWNER_EMAIL)
+
+  const seeded = await seedTemplate(
+    {
+      ownerId,
+      themeKey: input.themeKey,
+      ...(input.definition === undefined ? {} : { definition: input.definition }),
+      ...(input.templateKey === undefined ? {} : { key: input.templateKey }),
+    },
+    config
+  )
+  const { id: templateId, definitionVersion } = seeded
 
   const slug =
     input.slug ??
