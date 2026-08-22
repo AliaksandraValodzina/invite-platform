@@ -12,6 +12,7 @@ import {
 import { pictureFromUpload, type PictureContent } from '@/lib/uploads/picture'
 
 import { buyerGet, buyerRequest, type BuyerResponse, type BuyerSession } from './buyer'
+import { loadTemplateDocuments } from './templates'
 
 /**
  * Everything the editor reads and writes, as the buyer.
@@ -22,10 +23,16 @@ import { buyerGet, buyerRequest, type BuyerResponse, type BuyerSession } from '.
  * `events`, `event_content` and `rsvp_questions`, so the worst a bug in this
  * file can do is fail. It cannot write into somebody else's wedding.
  *
- * The service role appears nowhere on this path, and its absence is the point.
- * A guest page has no user, so every check on that path is code we wrote; a
- * buyer editing their own invitation has a user, so the check is a policy in the
+ * The service role decides nothing on this path, and that is the point. A guest
+ * page has no user, so every check on that path is code we wrote; a buyer
+ * editing their own invitation has a user, so the check is a policy in the
  * database.
+ *
+ * There is exactly one exception and it is worth naming rather than hiding: the
+ * template's own definition and theme are read with the service role, because a
+ * buyer does not own the template they activated and `templates` has no policy
+ * that would let them see it. Which event this is, and whether it is theirs, is
+ * still row level security. See `loadTemplateDocuments` for the whole argument.
  *
  * ## Three homes, three saves
  *
@@ -44,11 +51,13 @@ const editableRowSchema = z.object({
   id: z.string(),
   slug: z.string(),
   title: z.string(),
+  status: z.string(),
+  published_at: z.string().nullable(),
   starts_at_local: z.string(),
   ends_at_local: z.string().nullable(),
   time_zone: z.string(),
   serving_state: z.enum(['unpublished', 'live', 'grace', 'expired']),
-  templates: z.object({ definition: z.unknown(), theme: z.unknown() }).nullable(),
+  template_id: z.string(),
   event_content: z.array(z.object({ revision: z.number(), content: z.unknown() })),
   rsvp_questions: z.array(z.unknown()),
 })
@@ -67,6 +76,17 @@ export type EditableEvent = {
   readonly id: string
   readonly slug: string
   readonly title: string
+  /** `draft` or `published`. What the buyer's publish control acts on. */
+  readonly status: string
+  /**
+   * When this event was FIRST published, or null.
+   *
+   * It is the one thing that decides whether the slug can still move.
+   * `events_before_write` refuses a slug change once this is set, and it keeps
+   * the first publication rather than the most recent one, so unpublishing does
+   * not hand the link back. See `saveEventDetails`.
+   */
+  readonly publishedAt: string | null
   readonly startsAtLocal: string
   readonly endsAtLocal: string | null
   readonly timeZone: string
@@ -83,11 +103,13 @@ const EDITABLE_SELECT = [
   'id',
   'slug',
   'title',
+  'status',
+  'published_at',
   'starts_at_local',
   'ends_at_local',
   'time_zone',
   'serving_state',
-  'templates(definition,theme)',
+  'template_id',
   'event_content(revision,content)',
   'rsvp_questions(id,type,prompt,position,required,options,pii_class)',
 ].join(',')
@@ -123,8 +145,14 @@ export async function loadEditableEvent(
   if (!parsed.success) return null
 
   const row = parsed.data
-  // An event naming a template that cannot be read has no structure to edit.
-  if (row.templates === null) return null
+
+  /*
+   * The template comes from a second read, keyed by an id this buyer's own
+   * token just returned. An event naming a template that cannot be read has no
+   * structure to edit, and null is the same answer as "not yours" on purpose.
+   */
+  const template = await loadTemplateDocuments(row.template_id)
+  if (template === null) return null
 
   const published = row.event_content[0]
 
@@ -132,11 +160,13 @@ export async function loadEditableEvent(
     id: row.id,
     slug: row.slug,
     title: row.title,
+    status: row.status,
+    publishedAt: row.published_at,
     startsAtLocal: row.starts_at_local,
     endsAtLocal: row.ends_at_local,
     timeZone: row.time_zone,
     state: row.serving_state,
-    definition: row.templates.definition,
+    definition: template.definition,
     content: published?.content ?? null,
     revision: published?.revision ?? 0,
     questions: readQuestions(row.rsvp_questions),
@@ -197,14 +227,32 @@ export type EventDetailsPatch = {
   readonly startsAtLocal: string
   readonly endsAtLocal: string | null
   readonly timeZone: string
+  /**
+   * A slug to move to, or null to leave it alone.
+   *
+   * Only ever set for an event that has never been published. See
+   * `mintSlugForTitle`.
+   */
+  readonly slug: string | null
 }
 
 /**
  * Saves the event row's own fields.
  *
- * The slug is deliberately not among them. It is the link guests already have,
- * `events_before_write` refuses to change it once an event has been published,
- * and there is no way to reach the people holding the old one to correct it.
+ * The slug is here and it was not before, so it is worth saying exactly when it
+ * moves and when it cannot. `events_before_write` refuses a slug change once
+ * `published_at` is set, and keeps `published_at` at the FIRST publication, so
+ * unpublishing does not reopen it. Before that moment nobody holds the link:
+ * the page serves the designed "not published" notice to anyone who tries it.
+ *
+ * That is the whole window, and it exists because of activation. A code is
+ * spent before the buyer has typed anything, so the event is created under a
+ * placeholder title and the slug minted from it says `your-invitation-a1b2c3`.
+ * Letting it follow the title until publication is what turns that into
+ * `wilhelmina-and-bartholomew-a1b2c3` in the WhatsApp preview, which is the
+ * first impression of the product (AGENTS.md). Publishing is what freezes it,
+ * and after that nothing moves it, because there is no way to reach the people
+ * holding the old link and correct it.
  */
 export async function saveEventDetails(
   session: BuyerSession,
@@ -221,12 +269,97 @@ export async function saveEventDetails(
         starts_at_local: patch.startsAtLocal,
         ends_at_local: patch.endsAtLocal,
         time_zone: patch.timeZone,
+        ...(patch.slug === null ? {} : { slug: patch.slug }),
       },
       prefer: 'return=minimal',
     }
   )
 
   return outcome(response, 'The event details could not be saved just now.')
+}
+
+/**
+ * A fresh slug for a title, minted by the database.
+ *
+ * `public.mint_event_slug` is SECURITY DEFINER so its uniqueness check sees
+ * every row rather than only this buyer's. Called as a normal user under RLS it
+ * would happily mint a slug another owner already holds and fail on the write.
+ * That argument is in `20260819010400_events.sql`; this is the caller it was
+ * written for.
+ */
+export async function mintSlugForTitle(
+  session: BuyerSession,
+  title: string
+): Promise<string | null> {
+  const response = await buyerRequest(session, 'POST', 'rpc/mint_event_slug', {
+    body: { p_title: title },
+  })
+
+  return response.ok && typeof response.json === 'string' ? response.json : null
+}
+
+/**
+ * Publishing, and unpublishing.
+ *
+ * One column and no second story. `events.status` is publication, expiry is
+ * derived from timestamps, and `public.event_state_at` is the only thing that
+ * combines them into what a guest gets (docs/serving.md). So this writes
+ * `status` and nothing else: `published_at` is filled in by
+ * `events_before_write` on the first publication and left alone afterwards,
+ * which is what keeps the slug frozen through an unpublish.
+ *
+ * Unpublishing is a real button and not a hidden one. A buyer who put the wrong
+ * date in front of two hundred people needs to be able to take the page down
+ * inside a minute, and the alternative to a button is an email to the captain,
+ * which is the thing this whole stage exists to remove.
+ */
+export async function setEventStatus(
+  session: BuyerSession,
+  eventId: string,
+  status: 'draft' | 'published'
+): Promise<WriteOutcome> {
+  const response = await buyerRequest(
+    session,
+    'PATCH',
+    `events?id=eq.${encodeURIComponent(eventId)}`,
+    { body: { status }, prefer: 'return=minimal' }
+  )
+
+  return outcome(
+    response,
+    status === 'published'
+      ? 'Your invitation could not be published just now.'
+      : 'Your invitation could not be taken down just now.'
+  )
+}
+
+/**
+ * How many people have replied, exactly.
+ *
+ * `Prefer: count=exact` and `Content-Range`, rather than counting rows in the
+ * body, because PostgREST caps a body at `max_rows` and a wedding with more
+ * replies than that would be reported as having exactly the cap. This number is
+ * shown to a buyer in a sentence about whether to change their venue, so it has
+ * to be the real one.
+ *
+ * `null` means the count could not be established, and every caller treats that
+ * as "there may be replies" rather than as zero. Being asked to confirm a change
+ * nobody had replied to is a small annoyance; changing a date under twelve
+ * people without being asked is the thing the confirmation exists to prevent.
+ */
+export async function countReplies(session: BuyerSession, eventId: string): Promise<number | null> {
+  const response = await buyerRequest(
+    session,
+    'GET',
+    `rsvps?${new URLSearchParams({
+      event_id: `eq.${eventId}`,
+      select: 'id',
+      limit: '1',
+    }).toString()}`,
+    { prefer: 'count=exact' }
+  )
+
+  return response.ok ? response.count : null
 }
 
 /**

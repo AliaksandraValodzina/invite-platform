@@ -92,15 +92,22 @@ export type AuthCall =
 /**
  * Asks the auth API to send a magic link.
  *
- * `should_create_user: false` is the load bearing option. An account is created
- * when a code is redeemed, not when somebody types an address into a login
- * form, and without this an unknown address would silently become an account
- * with nothing in it. It also means the answer to "is this address a customer"
- * is the same either way, which is the answer a login form should give.
+ * `createUser` defaults to false, and the default is the load bearing part. An
+ * account is created when a code is redeemed, not when somebody types an
+ * address into a login form, and without that an unknown address would silently
+ * become an account with nothing in it. It also means the answer to "is this
+ * address a customer" is the same either way, which is the answer a login form
+ * should give.
+ *
+ * Exactly one caller passes true: the claim page, and only for a code that is
+ * unspent, unrevoked and unlapsed at the moment it asks. Holding a paid
+ * activation IS the authorisation to become a customer, and it is the only one
+ * this product recognises. See `src/app/claim/[code]/actions.ts`.
  */
 export async function requestMagicLink(
   email: string,
-  redirectTo: string
+  redirectTo: string,
+  options: { readonly createUser?: boolean } = {}
 ): Promise<{ readonly ok: boolean; readonly reason?: string }> {
   const config = readAuthConfig()
 
@@ -113,7 +120,7 @@ export async function requestMagicLink(
     },
     body: JSON.stringify({
       email,
-      should_create_user: false,
+      should_create_user: options.createUser === true,
       email_redirect_to: redirectTo,
     }),
     cache: 'no-store',

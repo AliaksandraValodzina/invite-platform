@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 
+import { CLAIM_COOKIE, NEXT_PARAM, resolveDestination } from '@/lib/auth/destination'
 import {
   ACCESS_COOKIE,
   cookieOptions,
@@ -46,6 +47,13 @@ function seeOther(location: string, headers: Record<string, string> = {}): NextR
  * It also accepts `token`, because that is the parameter Supabase's default
  * magic link template sends when it has not been pointed here. Both names mean
  * the same hash.
+ *
+ * Where it lands is `resolveDestination`, and the reason that is not simply
+ * `/dashboard` is the activation flow: a buyer who clicked a claim link, signed
+ * in, and arrived at an empty dashboard has, as far as they can tell, paid and
+ * received nothing. The destination is carried in `?next=` and in a cookie, and
+ * neither is trusted further than an allow list of the two shapes this product
+ * produces. See src/lib/auth/destination.ts.
  */
 
 export const dynamic = 'force-dynamic'
@@ -71,11 +79,23 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return seeOther('/login?problem=expired')
   }
 
-  const response = seeOther('/dashboard')
+  const destination = resolveDestination(
+    request.nextUrl.searchParams.get(NEXT_PARAM),
+    request.cookies.get(CLAIM_COOKIE)?.value
+  )
+
+  const response = seeOther(destination)
   const secure = shouldUseSecureCookies(siteUrl)
 
   response.cookies.set(ACCESS_COOKIE, verified.tokens.accessToken, cookieOptions(secure))
   response.cookies.set(REFRESH_COOKIE, verified.tokens.refreshToken, cookieOptions(secure))
+  /*
+   * The pending claim has been handed on, so the note about it goes. Leaving it
+   * would send the next sign-in on this browser back to a claim link that is by
+   * then almost certainly spent, which is a confusing place to land after
+   * asking for the dashboard.
+   */
+  response.cookies.delete(CLAIM_COOKIE)
 
   return response
 }

@@ -3,29 +3,49 @@
 import { revalidatePath, updateTag } from 'next/cache'
 
 import {
+  blockDetailChanges,
   buildContentDocument,
   checkContent,
   editableSections,
+  isLoadBearingBlock,
   overrideFor,
   pictureFields,
   readValue,
+  scheduleDetailChanges,
   sectionPrefix,
   type EditableSection,
   type JsonRecord,
   type PictureValue,
 } from '@/lib/editor'
-import { failed, saved, type SaveResult } from '@/lib/editor/result'
-import { isSupportedTimeZone, parseWallClock } from '@/lib/event/time'
+import {
+  confirming,
+  encodeReplay,
+  failed,
+  isConfirmed,
+  replayedForm,
+  saved,
+  type DetailChange,
+  type SaveResult,
+} from '@/lib/editor/result'
+import {
+  formatEventDate,
+  formatEventTime,
+  isSupportedTimeZone,
+  parseWallClock,
+} from '@/lib/event/time'
 import { DEFAULT_RSVP_QUESTIONS } from '@/lib/rsvp/questions'
 import { eventCacheTag } from '@/lib/serving/cache'
 import { currentBuyer } from '@/lib/supabase/buyer'
 import {
   addQuestions,
+  countReplies,
   loadEditableEvent,
+  mintSlugForTitle,
   pictureForUpload,
   retireQuestion,
   saveEventContent,
   saveEventDetails,
+  setEventStatus,
   setQuestionRequired,
   type EditableEvent,
   type NewQuestion,
@@ -58,6 +78,20 @@ import type { BuyerSession } from '@/lib/supabase/buyer'
  * only through the form on the page, so the check has to be here rather than in
  * the page that rendered the form. It is row level security that answers, which
  * is why the same call that loads the event is also the ownership check.
+ *
+ * ## The load bearing detail warning
+ *
+ * Two of these three saves can change a fact a guest has already acted on: the
+ * date and the time zone on the details, and the venue and the address on the
+ * map section. When one of those moves on an invitation that has replies, the
+ * save stops and asks, showing how many people have replied. Nothing is sent to
+ * anybody either way, and the buyer may go ahead: it is a confirmation and never
+ * a block. See src/lib/editor/load-bearing.ts for what is on the list and why
+ * that list cannot be derived from the format, and src/lib/editor/result.ts for
+ * how the pending save survives being asked about.
+ *
+ * Two more saves live here, and they are one column: publishing, and taking a
+ * page back down.
  */
 
 // The invitation --------------------------------------------------------------
@@ -65,8 +99,15 @@ import type { BuyerSession } from '@/lib/supabase/buyer'
 export async function saveInvitation(
   eventId: string,
   _previous: SaveResult,
-  formData: FormData
+  submitted: FormData
 ): Promise<SaveResult> {
+  /*
+   * A confirmation replays the form that was asked about rather than the one
+   * that was just posted, because React resets the visible controls between the
+   * two. See `replayedForm`.
+   */
+  const formData = replayedForm(submitted)
+
   const loaded = await open(eventId)
   if ('failure' in loaded) return loaded.failure
 
@@ -87,6 +128,7 @@ export async function saveInvitation(
 
   const blocks: Record<string, JsonRecord> = {}
   let envelope: JsonRecord | undefined
+  const changes: DetailChange[] = []
 
   for (const section of sections) {
     const prefix = sectionPrefix(section)
@@ -98,6 +140,16 @@ export async function saveInvitation(
     })
     const override = overrideFor(section.base, value)
 
+    /*
+     * Compared against `section.current`, which is the template's default with
+     * the buyer's override merged over it: the value a guest can read right
+     * now. Comparing overrides would miss a buyer clearing theirs, which does
+     * change what is on the page.
+     */
+    if (isLoadBearingBlock(section.type)) {
+      changes.push(...blockDetailChanges(section.type, section.current, value))
+    }
+
     if (section.kind === 'envelope') envelope = override
     else blocks[section.id] = override
   }
@@ -108,6 +160,9 @@ export async function saveInvitation(
   if (!checked.ok) {
     return failed('Some of that could not be saved, so none of it was.', [...checked.issues])
   }
+
+  const question = await askAboutChanges(buyer, eventId, changes, submitted)
+  if (question !== null) return question
 
   const written = await saveEventContent(buyer, eventId, checked.content)
   if (!written.ok) return failed(written.message, [{ path: 'database', message: written.detail }])
@@ -121,8 +176,10 @@ export async function saveInvitation(
 export async function saveDetails(
   eventId: string,
   _previous: SaveResult,
-  formData: FormData
+  submitted: FormData
 ): Promise<SaveResult> {
+  const formData = replayedForm(submitted)
+
   const loaded = await open(eventId)
   if ('failure' in loaded) return loaded.failure
 
@@ -163,16 +220,60 @@ export async function saveDetails(
     ])
   }
 
+  const changes = scheduleDetailChanges(
+    { startsAtLocal: loaded.event.startsAtLocal, timeZone: loaded.event.timeZone },
+    { startsAtLocal, timeZone },
+    describeWhen
+  )
+
+  const question = await askAboutChanges(loaded.buyer, eventId, changes, submitted)
+  if (question !== null) return question
+
+  /*
+   * A new link, but only while nobody can be holding the old one. The event was
+   * created under a placeholder title the moment a code was spent, so the slug
+   * minted then says nothing about the couple; letting it follow the title until
+   * publication is what turns it into a link worth pasting into a chat. Once
+   * published it is frozen by `events_before_write`, and asking for a change
+   * then would fail the whole save. See `saveEventDetails`.
+   */
+  let slug: string | null = null
+  if (loaded.event.publishedAt === null && title !== loaded.event.title) {
+    slug = await mintSlugForTitle(loaded.buyer, title)
+    if (slug === null) {
+      return failed('A link for the invitation could not be minted, so nothing was saved.', [
+        { path: 'title', message: 'the database would not mint a slug for this title' },
+      ])
+    }
+  }
+
   const written = await saveEventDetails(loaded.buyer, eventId, {
     title,
     startsAtLocal,
     endsAtLocal,
     timeZone,
+    slug,
   })
   if (!written.ok) return failed(written.message, [{ path: 'database', message: written.detail }])
 
+  // Both slugs: the one guests would use now, and the one they would have used
+  // a moment ago. Dropping only the new one would leave the old address serving
+  // a cached copy of a page that has moved.
   dropCachedCopies(eventId, loaded.event.slug)
-  return saved('Saved. The countdown and the date now read from this.')
+  if (slug !== null) updateTag(eventCacheTag(slug))
+
+  return saved(
+    slug === null
+      ? 'Saved. The countdown and the date now read from this.'
+      : `Saved. Your link is now /e/${slug}.`
+  )
+}
+
+/** `Saturday 14 March 2027, 4:00 pm (Australia/Sydney)`, for a confirmation. */
+function describeWhen(startsAtLocal: string, timeZone: string): string {
+  const wallClock = parseWallClock(startsAtLocal)
+  if (wallClock === null) return `${startsAtLocal} (${timeZone})`
+  return `${formatEventDate(wallClock)}, ${formatEventTime(wallClock)} (${timeZone})`
 }
 
 // The reply form --------------------------------------------------------------
@@ -252,7 +353,84 @@ export async function saveQuestions(
   return saved('Saved. The reply form asks this now.')
 }
 
+// Publishing ------------------------------------------------------------------
+
+/**
+ * Putting the invitation in front of guests, and taking it back down.
+ *
+ * One column, `events.status`, and no second opinion about it anywhere. Which
+ * of the four states a guest gets is `public.event_state_at` reading that column
+ * alongside the two expiry timestamps, and nothing in this application compares
+ * those a second time (docs/serving.md). So publishing is a one-field write and
+ * the observable effect is somebody else's: `/e/<slug>` stops serving the
+ * designed "not published" notice and starts serving the invitation.
+ *
+ * No confirmation on either, and that is deliberate. The load bearing warning
+ * exists because a guest has already read something and acted on it; nobody has
+ * read an unpublished page, and taking one down tells guests nothing they were
+ * relying on. What unpublishing does need is to be fast, because the reason
+ * somebody reaches for it is that the wrong thing is live.
+ */
+export async function publishInvitation(
+  eventId: string,
+  _previous: SaveResult,
+  _formData: FormData
+): Promise<SaveResult> {
+  return setStatus(eventId, 'published')
+}
+
+export async function unpublishInvitation(
+  eventId: string,
+  _previous: SaveResult,
+  _formData: FormData
+): Promise<SaveResult> {
+  return setStatus(eventId, 'draft')
+}
+
+async function setStatus(eventId: string, status: 'draft' | 'published'): Promise<SaveResult> {
+  const loaded = await open(eventId)
+  if ('failure' in loaded) return loaded.failure
+
+  const written = await setEventStatus(loaded.buyer, eventId, status)
+  if (!written.ok) return failed(written.message, [{ path: 'database', message: written.detail }])
+
+  dropCachedCopies(eventId, loaded.event.slug)
+
+  return saved(
+    status === 'published'
+      ? `Published. /e/${loaded.event.slug} opens the invitation now, and the link never changes.`
+      : 'Taken down. Anyone opening the link now sees a notice instead of the invitation.'
+  )
+}
+
 // Shared ----------------------------------------------------------------------
+
+/**
+ * The question in front of a load bearing change, or null to go ahead.
+ *
+ * Null in three cases: nothing load bearing moved, nobody has replied, or the
+ * buyer has already said yes. Everything else asks, including the case where
+ * the count could not be read, because being asked about a change nobody had
+ * replied to costs one extra press and changing a venue under twelve people
+ * without asking is what the confirmation exists to prevent.
+ *
+ * `submitted` rather than the replayed form, so that confirming a second time
+ * cannot nest one replay inside another.
+ */
+async function askAboutChanges(
+  buyer: BuyerSession,
+  eventId: string,
+  changes: readonly DetailChange[],
+  submitted: FormData
+): Promise<SaveResult | null> {
+  if (changes.length === 0) return null
+  if (isConfirmed(submitted)) return null
+
+  const replies = await countReplies(buyer, eventId)
+  if (replies === 0) return null
+
+  return confirming(replies, changes, encodeReplay(submitted))
+}
 
 type Opened =
   | { readonly failure: SaveResult }
