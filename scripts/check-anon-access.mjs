@@ -152,7 +152,18 @@ const created = {
   question: null,
   rsvp: null,
   upload: null,
+  activationCode: null,
 }
+
+/**
+ * The plaintext of the probe's activation code.
+ *
+ * A code is a bearer token: whoever holds this string can claim a paid
+ * activation. This one is written here on purpose, because the checks below are
+ * about what somebody holding a stolen database row can do, and a row nobody
+ * can name is a row every denial passes against by accident.
+ */
+const PROBE_CODE = 'PROBE-CODE-ANON-ACCESS'
 
 async function seed() {
   const owner = await auth('admin/users', {
@@ -285,6 +296,34 @@ async function seed() {
     body: { email: `owner-${stamp}@example.test`, password: `Owner-${stamp}-pw!` },
   })
 
+  /*
+   * An unspent activation code, so the denials below are denials rather than an
+   * empty table. It is the newest bearer token in this product: a link carrying
+   * this string is one paid invitation, and a stranger who could read the row,
+   * or mark it redeemed against their own account, would have taken a purchase.
+   */
+  const hashed = await rest('rpc/hash_activation_code', {
+    ...svc,
+    method: 'POST',
+    body: { p_code: PROBE_CODE },
+  })
+  if (!hashed.ok) throw new Error(`hashing the probe code failed: ${describe(hashed)}`)
+
+  const code = await rest('activation_codes', {
+    ...svc,
+    method: 'POST',
+    prefer: 'return=representation',
+    body: {
+      owner_id: owner.id,
+      template_id: created.template.id,
+      code_hash: hashed.json,
+      code_prefix: 'PROB',
+      hosting_months: 12,
+    },
+  })
+  if (!code.ok) throw new Error(`seeding the activation code failed: ${describe(code)}`)
+  created.activationCode = code.json[0]
+
   return {
     owner,
     stranger,
@@ -294,6 +333,8 @@ async function seed() {
 }
 
 async function cleanup() {
+  if (created.activationCode)
+    await rest(`activation_codes?id=eq.${created.activationCode.id}`, { ...svc, method: 'DELETE' })
   if (created.event) await rest(`events?id=eq.${created.event.id}`, { ...svc, method: 'DELETE' })
   if (created.template)
     await rest(`templates?id=eq.${created.template.id}`, { ...svc, method: 'DELETE' })
@@ -333,6 +374,15 @@ async function main() {
     seedEvent.ok && seedEvent.json?.length === 1,
     describe(seedEvent)
   )
+  const seedCode = await rest(
+    `activation_codes?select=status,code_prefix&id=eq.${created.activationCode.id}`,
+    svc
+  )
+  check(
+    'the service role can read the seeded activation code, which is how redemption finds one',
+    seedCode.ok && seedCode.json?.[0]?.status === 'issued',
+    describe(seedCode)
+  )
 
   console.log('\nAn anonymous client can read nothing')
   for (const table of TABLES) {
@@ -363,6 +413,37 @@ async function main() {
     'anon cannot even read which questions an event asks',
     denied(anonQuestions),
     describe(anonQuestions)
+  )
+
+  // Activation codes, which are the newest bearer token here. A claim link is a
+  // paid invitation, so a client that could list unspent codes could help
+  // itself to every unsold order.
+  const anonCodes = await rest('activation_codes?select=code_hash,code_prefix', anon)
+  check(
+    'anon cannot read activation codes, not even their hashes',
+    denied(anonCodes),
+    describe(anonCodes)
+  )
+
+  const anonCodeById = await rest(
+    `activation_codes?select=*&id=eq.${created.activationCode.id}`,
+    anon
+  )
+  check(
+    'anon cannot read the seeded activation code by id',
+    denied(anonCodeById),
+    describe(anonCodeById)
+  )
+
+  const anonHash = await rest('rpc/hash_activation_code', {
+    ...anon,
+    method: 'POST',
+    body: { p_code: PROBE_CODE },
+  })
+  check(
+    'anon cannot even ask the database what a code hashes to: redemption is a service role path',
+    !anonHash.ok,
+    describe(anonHash)
   )
 
   console.log('\nAn anonymous client can write nothing')
@@ -541,6 +622,47 @@ async function main() {
       strangerAccounts.json?.length === 1 &&
       strangerAccounts.json[0].owner_id !== owner.id,
     describe(strangerAccounts)
+  )
+
+  /*
+   * The one that matters most for activation. A stranger who could mark an
+   * unspent code redeemed against their own account would have taken somebody
+   * else's purchase, and the buyer's link would then open a spent-code page.
+   * The row is read back rather than the refusal trusted.
+   */
+  const strangerSpend = await rest(`activation_codes?id=eq.${created.activationCode.id}`, {
+    key: config.anonKey,
+    token: strangerToken,
+    method: 'PATCH',
+    body: {
+      status: 'redeemed',
+      redeemed_by: created.users[1],
+      redeemed_at: new Date().toISOString(),
+      redeemed_event_id: created.event.id,
+    },
+  })
+  const codeAfter = await rest(
+    `activation_codes?select=status,redeemed_by&id=eq.${created.activationCode.id}`,
+    svc
+  )
+  check(
+    'a signed-in stranger cannot spend somebody else activation code',
+    codeAfter.ok &&
+      codeAfter.json?.[0]?.status === 'issued' &&
+      codeAfter.json?.[0]?.redeemed_by === null,
+    `patch: ${describe(strangerSpend)} / after: ${describe(codeAfter)}`
+  )
+
+  const strangerHash = await rest('rpc/hash_activation_code', {
+    key: config.anonKey,
+    token: strangerToken,
+    method: 'POST',
+    body: { p_code: PROBE_CODE },
+  })
+  check(
+    'a signed-in stranger cannot ask the database what a code hashes to either',
+    !strangerHash.ok,
+    describe(strangerHash)
   )
 
   const strangerSteal = await rest(`events?id=eq.${created.event.id}`, {

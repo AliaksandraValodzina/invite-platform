@@ -5,11 +5,18 @@ constraints that are binding on every change.
 
 This repo carries the application shell and CI gate, the data model, the
 template definition format, the Open Graph share card, the guest page and the
-reply path, the upload capability, and the guided form a buyer fills in: a slug
-at `/e/<slug>` resolves to an event, a template and a published revision, renders
-through the blocks and themes, and takes a reply that the buyer reads back at
-`/dashboard`. There is no redemption flow yet, and sections cannot be added,
-removed or moved. Those are separate tasks.
+reply path, the upload capability, the guided form a buyer fills in, and
+activation: an order becomes a claim link, the buyer clicks it and gets their own
+copy, fills it in and publishes, and a slug at `/e/<slug>` resolves to an event,
+a template and a published revision, renders through the blocks and themes, and
+takes a reply that the buyer reads back at `/dashboard`. Sections cannot be
+added, removed or moved. That is a separate task.
+
+`docs/activation.md` is the order-to-invitation path: the two links and why they
+must never be conflated, how a claim survives the trip through a mailbox, why a
+second click opens the invitation somebody already has rather than an error,
+publish and unpublish, and the confirmation in front of moving a date or a venue
+that guests have already acted on.
 
 `docs/editing.md` is the buyer's side: `/dashboard/<id>/edit`, where the names,
 the date, the venue, the words, the photographs and the reply form are filled in.
@@ -82,6 +89,7 @@ npm run dev           # open /e/<the slug it printed>
 | `supabase test db`                              | pgTAP suite over the schema and its policies                                                                       |
 | `node scripts/check-anon-access.mjs`            | Proves an anonymous client is denied, over HTTP                                                                    |
 | `node scripts/seed-event.ts`                    | Creates an event without a dashboard                                                                               |
+| `node scripts/issue-codes.ts`                   | Mints activation codes and prints the claim links, once                                                            |
 | `node scripts/prove-question-type-addition.mjs` | Performs a sixth RSVP question type against a local database and reads the catalogue to show nothing was rewritten |
 
 `npm run test:e2e` starts its own server: the dev server locally, and the production

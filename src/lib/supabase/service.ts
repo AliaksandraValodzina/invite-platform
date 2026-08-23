@@ -153,18 +153,59 @@ export async function servicePost(
   body: unknown,
   options: { readonly prefer?: string } = {}
 ): Promise<ServiceResponse> {
+  return serviceWrite('POST', path, body, options)
+}
+
+/**
+ * One PostgREST PATCH, with the service role. Never cached, at either layer.
+ *
+ * It exists for one shape and it is worth naming: the compare and set that
+ * spends an activation code. `activation_codes?id=eq.<id>&status=eq.issued` with
+ * `Prefer: return=representation` comes back with one row for the request that
+ * won and an empty array for every other one, because Postgres re-checks the
+ * filter after it takes the row lock. That empty array is the whole of the
+ * concurrency argument in `src/lib/activation/claim.ts`.
+ */
+export async function servicePatch(
+  path: string,
+  body: unknown,
+  options: { readonly prefer?: string } = {}
+): Promise<ServiceResponse> {
+  return serviceWrite('PATCH', path, body, options)
+}
+
+/**
+ * One PostgREST DELETE, with the service role.
+ *
+ * The claim path uses it to take back an event it created and then could not
+ * pay for with the code, which is the only delete in this application. See
+ * `src/lib/activation/claim.ts`.
+ */
+export async function serviceDelete(
+  path: string,
+  options: { readonly prefer?: string } = {}
+): Promise<ServiceResponse> {
+  return serviceWrite('DELETE', path, undefined, options)
+}
+
+async function serviceWrite(
+  method: 'POST' | 'PATCH' | 'DELETE',
+  path: string,
+  body: unknown,
+  options: { readonly prefer?: string }
+): Promise<ServiceResponse> {
   const config = readServiceConfig()
 
   const response = await fetch(`${config.url}/rest/v1/${path}`, {
-    method: 'POST',
+    method,
     headers: {
       apikey: config.serviceRoleKey,
       Authorization: `Bearer ${config.serviceRoleKey}`,
       Accept: 'application/json',
-      'Content-Type': 'application/json',
+      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       ...(options.prefer === undefined ? {} : { Prefer: options.prefer }),
     },
-    body: JSON.stringify(body),
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     cache: 'no-store',
   })
 

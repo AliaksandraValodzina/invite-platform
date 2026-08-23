@@ -36,6 +36,14 @@ export {
 } from './values'
 
 export {
+  LOAD_BEARING_BLOCK_FIELDS,
+  blockDetailChanges,
+  isLoadBearingBlock,
+  loadBearingFieldsFor,
+  scheduleDetailChanges,
+} from './load-bearing'
+
+export {
   ENVELOPE_SECTION,
   buildContentDocument,
   checkContent,

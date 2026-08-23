@@ -17,6 +17,17 @@ import { resolveSeedConfig, type SeedConfig } from '../../scripts/seed-event'
 
 export async function createSignInLink(
   email: string,
+  options: {
+    /**
+     * Where the link should land, as `?next=`.
+     *
+     * This is the carrier that has to survive a mailbox for a claim to survive
+     * sign-in, and it is put on by hand here for the same reason the token is:
+     * what is being skipped is the delivery, not the route. The callback is the
+     * real one and it applies the real allow list.
+     */
+    readonly next?: string
+  } = {},
   config: SeedConfig = resolveSeedConfig()
 ): Promise<string> {
   const response = await fetch(`${config.url}/auth/v1/admin/generate_link`, {
@@ -38,7 +49,8 @@ export async function createSignInLink(
     throw new Error(`the auth API returned no token for ${email}`)
   }
 
-  return `/auth/callback?token_hash=${body.hashed_token}`
+  const next = options.next === undefined ? '' : `&next=${encodeURIComponent(options.next)}`
+  return `/auth/callback?token_hash=${body.hashed_token}${next}`
 }
 
 /** Opens the link, which lands on the dashboard with the session cookies set. */

@@ -162,7 +162,23 @@ site_url = "http://127.0.0.1:3000"
 # The public URL that Auth serves on. Defaults to the API external URL with `/auth/v1` appended.
 # external_url = ""
 # A list of *exact* URLs that auth providers are permitted to redirect to post authentication.
-additional_redirect_urls = ["https://127.0.0.1:3000"]
+#
+# The glob entries are load bearing rather than convenience. A magic link sent
+# from the claim flow redirects to `/auth/callback?next=/claim/<code>`, which is
+# how a paid activation survives the trip through a mailbox
+# (src/lib/auth/destination.ts). GoTrue compares a redirect against site_url for
+# EQUALITY and against this list by pattern, so without a pattern that admits a
+# path and a query it would silently fall back to site_url and drop the claim.
+# The buyer would then arrive signed in, at an empty dashboard, having paid.
+#
+# Both hosts, because Next normalises 127.0.0.1 to localhost on some paths and a
+# cookie jar treats them as different origins. A hosted deployment needs the
+# same entry for its own origin in the project's auth settings.
+additional_redirect_urls = [
+  "http://127.0.0.1:3000/**",
+  "http://localhost:3000/**",
+  "https://127.0.0.1:3000",
+]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
 # JWT issuer URL. If not set, defaults to auth.external_url.

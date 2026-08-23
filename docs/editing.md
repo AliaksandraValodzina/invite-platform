@@ -232,6 +232,23 @@ directly. The check is row level security in the database on `events`,
 can do is fail: it cannot write into somebody else's wedding. An event that is
 not yours and an event that does not exist give the same answer.
 
+One read on this path uses the service role, and it is worth naming rather than
+leaving to be discovered: the template's own `definition` and `theme`. A buyer
+does not own the template they activated, the seller does, and `templates` has
+one policy that says `owner_id = auth.uid()`. Which event this is, and whether
+it is theirs, is still row level security; the second read is keyed by an id the
+database just handed that buyer and returns two design documents with nothing of
+anybody's in them. `docs/activation.md` has the whole argument and the schema
+change that would replace it.
+
+## The load bearing detail warning
+
+A save that moves the date, the time zone, the venue or the address on an
+invitation that already has replies stops and asks, showing the count. It is a
+confirmation and never a block, and nothing is sent to guests either way. The
+list, why it cannot be derived from the format, and how the pending save
+survives being asked about are in `docs/activation.md`.
+
 ## Caching
 
 A save calls `updateTag(eventCacheTag(slug))`, not `revalidateTag`. The

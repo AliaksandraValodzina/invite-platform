@@ -1,7 +1,12 @@
 import { expect, test } from '@playwright/test'
 
-import { GUEST_PAGE_REVALIDATE_SECONDS } from '@/lib/serving/cache'
+import {
+  GUEST_PAGE_REVALIDATE_SECONDS,
+  TEMPLATE_PREVIEW_REVALIDATE_SECONDS,
+  TEMPLATE_PREVIEW_STALE_WHILE_REVALIDATE_SECONDS,
+} from '@/lib/serving/cache'
 import { ASSET_PATH_PREFIX } from '@/lib/uploads'
+import { seedPreviewTemplate } from '../support/activation'
 import { signIn } from '../support/auth'
 import { seedGuestEvent } from '../support/events'
 
@@ -206,6 +211,56 @@ function directives(header: string): Map<string, string | null> {
   )
 }
 
+test.describe('the template preview cache headers', () => {
+  test.beforeEach(({ browserName: _browserName }, testInfo) => {
+    test.skip(
+      testInfo.project.name !== 'desktop-chromium',
+      'headers do not vary by viewport, and a second run is a second billed minute'
+    )
+    test.skip(
+      AGAINST_A_DEPLOYMENT,
+      'this seeds a template, which needs the service role for the stack under test. ' +
+        'Against a deployment, check it by hand with curl.'
+    )
+    test.skip(
+      !process.env.CI,
+      'the dev server sets different headers from a production build. Run with CI=1 against ' +
+        '`npm run build && npm start`.'
+    )
+  })
+
+  test('a design nobody owns is edge cacheable, with a stale window somebody chose', async ({
+    request,
+  }) => {
+    const { templateId } = await seedPreviewTemplate()
+
+    const response = await request.get(`/t/${templateId}`)
+    expect(response.status()).toBe(200)
+
+    const header = response.headers()['cache-control']
+    expect(header, 'the template preview carries no Cache-Control at all').toBeDefined()
+
+    const parsed = directives(header!)
+
+    // It belongs to nobody, so a shared cache holding one copy is the whole
+    // point: this link goes in a shop listing and is meant to spread.
+    expect(parsed.has('public')).toBe(true)
+    expect(Number(parsed.get('s-maxage'))).toBe(TEMPLATE_PREVIEW_REVALIDATE_SECONDS)
+
+    /*
+     * The stale window is the assertion that matters. Next's own default for a
+     * route like this is nearly a year, which would leave a design corrected on
+     * Monday still on screen in the spring.
+     */
+    expect(Number(parsed.get('stale-while-revalidate'))).toBe(
+      TEMPLATE_PREVIEW_STALE_WHILE_REVALIDATE_SECONDS
+    )
+
+    // Same rule as the guest page: `immutable` is for content addressed assets.
+    expect(header).not.toContain('immutable')
+  })
+})
+
 /**
  * The other half of the same decision.
  *
@@ -259,6 +314,28 @@ test.describe('the dashboard cache headers', () => {
 
     // And none of what the guest page needs. `public` here would be one buyer's
     // guest list in a CDN, and `s-maxage` would be how long it stayed there.
+    expect(parsed.has('public')).toBe(false)
+    expect(parsed.has('s-maxage')).toBe(false)
+  })
+
+  test('a claim link is never stored by anything either', async ({ request }) => {
+    /*
+     * The same header for a different secret. A claim URL carries a bearer
+     * token in its path and the response says whether that token is still worth
+     * anything, so a shared cache holding it would be handing one buyer's
+     * unspent purchase to whoever asked next. The code below is a real shape
+     * and belongs to nobody, which is the point: what is asserted is the header
+     * on the route rather than anything about a particular code.
+     */
+    const response = await request.get('/claim/AB4CD-9EFGH-JKMNP-QRSTV')
+
+    const header = response.headers()['cache-control']
+    expect(header, 'the claim page carries no Cache-Control at all').toBeDefined()
+
+    const parsed = directives(header!)
+
+    expect(parsed.has('no-store')).toBe(true)
+    expect(parsed.has('private')).toBe(true)
     expect(parsed.has('public')).toBe(false)
     expect(parsed.has('s-maxage')).toBe(false)
   })
