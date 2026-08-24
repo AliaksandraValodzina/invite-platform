@@ -8,11 +8,13 @@ An **interactive invitation website platform**. A buyer purchases an invitation 
 
 **v1 is not an app, it is a fulfilment pipe for listings the captain already sells.** Anything that does not move a buyer from *Etsy purchase → live site → RSVPs captured* is out of scope. That sentence is the captain's and it settles most scope arguments.
 
-Stack: **Next.js App Router + TypeScript (strict) + Tailwind + Supabase (Postgres, RLS) + Zod**, deployed on Vercel. Email via **Resend or Postmark, never raw SMTP** — deliverability from a new domain needs SPF/DKIM/DMARC and a warm-up.
+Stack: **Next.js App Router + TypeScript (strict) + Tailwind + Supabase (Postgres, RLS) + Zod**, deployed on Vercel. Email is **Resend** (chosen 2026-08-24 over Postmark; never raw SMTP) — deliverability from a new domain needs SPF/DKIM/DMARC and a warm-up, and it is not wired up yet: `docs/hosting.md` has the checklist and says why a magic link cannot sign anybody in until it is.
 
 **This Next is not the one you remember.** Read the guide under `node_modules/next/dist/docs/` before writing Next code; `middleware.ts` is now `proxy.ts`, and route segment config is read by static analysis so it will not take an imported constant.
 
 **Everything runs locally with no cloud credential.** `supabase start`, `.env.example` copied to `.env.local`, `node scripts/seed-event.ts`. Do not put a hosted project name or a database region anywhere in the repo: the region is chosen once and is effectively irreversible, and it is the captain's call.
+
+**The product is Mirthly, at `mirthly.app`** (`data/decision-product-name.md`). The repository, the Vercel project and the Supabase project are all still *named* `invite-platform`; renaming them is a separate action nobody has asked for. **How it is deployed is in `docs/hosting.md`** and the deployment shape is pinned in `vercel.json` rather than in a dashboard, for the same reason schema lives in migrations. Three things there are worth knowing before touching a hosted environment: the hosted database can be behind `main` and nothing says so out loud, the Supabase project's own Site URL and redirect allow-list are not schema and will silently break a paid activation if wrong, and a deployment with no R2 variables has no object store at all.
 
 ## Phase 0 is what we are building — and only that
 

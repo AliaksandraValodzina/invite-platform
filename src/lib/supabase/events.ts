@@ -163,11 +163,19 @@ export async function loadGuestPage(slug: string): Promise<GuestPageOutcome> {
       tags: [eventCacheTag(slug)],
     })
   } catch (error) {
-    return { kind: 'unavailable', reason: describe(error) }
+    return unavailable(slug, describe(error))
   }
 
   if (!response.ok) {
-    return { kind: 'unavailable', reason: `the database answered ${response.status}` }
+    /*
+     * The status alone is not actionable. A 400 from PostgREST is almost always
+     * a column or an embedded relationship this deploy asks for and the
+     * database does not have, which is a migration that did not run, and its
+     * body names the one that is missing. That body goes to the log and not
+     * into the reason: the reason is a value the route holds while it renders a
+     * page for a guest, and PostgREST's error bodies are not written for one.
+     */
+    return unavailable(slug, `the database answered ${response.status}`, response.detail)
   }
 
   if (!Array.isArray(response.json) || response.json.length === 0) {
@@ -176,18 +184,18 @@ export async function loadGuestPage(slug: string): Promise<GuestPageOutcome> {
 
   const parsed = rowSchema.safeParse(response.json[0])
   if (!parsed.success) {
-    return {
-      kind: 'unavailable',
-      reason: `the event row was not the shape this deploy expects: ${parsed.error.issues
+    return unavailable(
+      slug,
+      `the event row was not the shape this deploy expects: ${parsed.error.issues
         .map((issue) => `${issue.path.join('.')} ${issue.message}`)
-        .join('; ')}`,
-    }
+        .join('; ')}`
+    )
   }
 
   const row = parsed.data
 
   if (row.templates === null) {
-    return { kind: 'unavailable', reason: 'the event names a template that could not be read' }
+    return unavailable(slug, 'the event names a template that could not be read')
   }
 
   const event: GuestEvent = {
@@ -209,10 +217,7 @@ export async function loadGuestPage(slug: string): Promise<GuestPageOutcome> {
   // defaults are somebody else's placeholder names.
   if (published === undefined) {
     if (row.serving_state === 'live' || row.serving_state === 'grace') {
-      return {
-        kind: 'unavailable',
-        reason: 'the event is published but has no published content revision',
-      }
+      return unavailable(slug, 'the event is published but has no published content revision')
     }
 
     return {
@@ -277,6 +282,27 @@ function readQuestions(rows: readonly unknown[]): RsvpQuestion[] {
   }
 
   return questions.sort((left, right) => left.position - right.position)
+}
+
+/**
+ * The reason a guest was shown "this page could not be loaded", written where
+ * an operator can find it.
+ *
+ * The notice itself deliberately says nothing: a guest opening an invitation
+ * from a group chat is owed an apology, not a database error. But the reason
+ * was being computed and then dropped on the floor, which meant a deployment
+ * that could not reach its database looked exactly like one whose event row was
+ * the wrong shape, and the only way to tell them apart was to guess. That cost
+ * a real afternoon the first time this app was put on a host.
+ *
+ * The slug is in the line because one broken event and every event broken are
+ * different incidents. Nothing else from the row is: a reason is an operational
+ * fact and a guest page is full of somebody's personal information.
+ */
+function unavailable(slug: string, reason: string, detail?: string): GuestPageOutcome {
+  const suffix = detail === undefined || detail === '' ? '' : `: ${detail}`
+  console.error(`guest page unavailable: ${slug}: ${reason}${suffix}`)
+  return { kind: 'unavailable', reason }
 }
 
 function describe(error: unknown): string {

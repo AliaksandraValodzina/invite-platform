@@ -62,13 +62,43 @@ describe('the callback URL in the email', () => {
     )
   })
 
-  it('is built from the configured origin, because the product has no name yet', () => {
-    expect(callbackUrl('http://127.0.0.1:3000/', null)).toBe('http://127.0.0.1:3000/auth/callback')
+  it('is built from the configured origin, and never from a literal', () => {
+    expect(callbackUrl('http://127.0.0.1:3000/', null)).toBe(
+      `http://127.0.0.1:3000/auth/callback?${NEXT_PARAM}=`
+    )
   })
 
   it('drops a destination it would refuse to follow, rather than carrying it', () => {
     expect(callbackUrl('https://example.test', 'https://evil.test')).toBe(
-      'https://example.test/auth/callback'
+      `https://example.test/auth/callback?${NEXT_PARAM}=`
+    )
+  })
+
+  /*
+   * The email template appends the one-use token to this URL with `&`, because
+   * a Go template cannot ask whether what it was handed already has a query
+   * string. A bare path here produces `/auth/callback&token_hash=...`, the
+   * callback finds no token, and the buyer is told their link did not work one
+   * tap after paying. Asserted for every case, because the case that regresses
+   * is the one nobody thought about.
+   */
+  it('always carries a query string, which is what lets the email append a token', () => {
+    for (const destination of [
+      null,
+      '',
+      '/dashboard',
+      '/claim/AB4CD-9EFGH-JKMNP-QRSTV',
+      'https://evil.test',
+    ]) {
+      const url = callbackUrl('https://example.test', destination)
+      expect(url, `destination ${JSON.stringify(destination)}`).toContain('?')
+      expect(new URL(`${url}&token_hash=abc`).searchParams.get('token_hash')).toBe('abc')
+    }
+  })
+
+  it('an empty next is not a destination, so the claim cookie still decides', () => {
+    expect(resolveDestination('', '/claim/AB4CD-9EFGH-JKMNP-QRSTV')).toBe(
+      '/claim/AB4CD-9EFGH-JKMNP-QRSTV'
     )
   })
 })
