@@ -11,11 +11,11 @@ guided form that writes content is `docs/editing.md`.
 
 ## Three documents, not one
 
-| Document   | Column                                   | Holds                                                       |
-| ---------- | ---------------------------------------- | ----------------------------------------------------------- |
-| definition | `templates.definition`                   | which blocks, in what order, default copy, and the envelope |
-| theme      | `templates.theme`, `event_content.theme` | tokens, and only tokens                                     |
-| content    | `event_content.content`                  | the buyer's overrides, keyed by block id, and the envelope  |
+| Document   | Column                                   | Holds                                                                          |
+| ---------- | ---------------------------------------- | ------------------------------------------------------------------------------ |
+| definition | `templates.definition`                   | which blocks, in what order, default copy, and the envelope                    |
+| theme      | `templates.theme`, `event_content.theme` | tokens, and only tokens                                                        |
+| content    | `event_content.content`                  | the buyer's overrides, keyed by block id, their section list, and the envelope |
 
 ```jsonc
 // definition, at version 5 since every picture in it became one shape
@@ -24,13 +24,19 @@ guided form that writes content is `docs/editing.md`.
 // theme, at version 2 since the type scale gained a font per role
 { "version": 2, "tokens": { "color": {...}, "font": {...}, "typeScale": {...}, "space": {...}, "radius": {...} } }
 
-// content, at version 2 since it gained an envelope override
-{ "version": 2, "blocks": { "hero": { "headline": "Priya & Alex" } }, "envelope": { ... } }
+// content, at version 3 since it gained the buyer's own section list
+{ "version": 3, "blocks": { "hero": { "headline": "Priya & Alex" } }, "sections": ["hero", "rsvp"], "envelope": { ... } }
 ```
 
 `envelope` is beside `blocks` in both documents and not inside either, because
 the cover is drawn over the page rather than being a section of it, and it has
 no block id to be keyed by. `docs/envelope.md` has the whole of it.
+
+`sections` is the buyer's composition: block ids, in the order the page draws
+them. It is **absent** until they move something, and absent means the
+definition's own block list in the definition's own order, which is what keeps a
+section added to a template reaching every event that never composed.
+`docs/composition.md` has the whole of it.
 
 Each carries its own `version` and each versions independently. Adding a colour
 role is not the same change as adding a block, and forcing them to share a
@@ -50,6 +56,10 @@ Because content is keyed by `id` and never by `type`, renaming a block type
 moves no buyer content. Because ids are never reused, a removed block leaves an
 orphan that can be found rather than a key that silently belongs to something
 else now.
+
+It is also what made composition cheap. `content.sections` is a list of ids and
+carries no `type` and no `config`, so a buyer's own section order is a
+permutation of a list that already exists rather than a second copy of it.
 
 ## Content overrides, not snapshots
 
@@ -279,7 +289,9 @@ The hard direction, done in three steps that can be years apart.
    type, or drops it from the block list. Dropping it leaves the buyer's override
    for that id in `event_content.content`, untouched. `resolveEventPage` reports
    it as `orphanedContent` with the stored value, so a removal is visible instead
-   of silent.
+   of silent. An event whose `sections` still names the id keeps serving: the id
+   is skipped and reported as `unknownSections`, and the next composition change
+   the buyer makes stops naming it.
 3. **Delete the schema**, only once a query proves no stored document references
    the type. `templates.definition_version` and `events.template_definition_version`
    exist so that query is cheap.
@@ -307,15 +319,16 @@ both documents are in hand.
 The rule is: **fall back when the fallback is a designed artifact, fail when the
 fallback would be a lie.**
 
-| Broken               | Result  | Why                                                                                                                           |
-| -------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| definition           | fail    | there is no structure to render                                                                                               |
-| theme                | fail    | blocks consume tokens and nothing else                                                                                        |
-| content document     | fail    | template defaults are placeholder copy, and showing another couple's names to real guests is worse than a designed error page |
-| theme override       | degrade | a palette is not somebody's words; a correct page in the template palette still serves                                        |
-| envelope override    | degrade | the cover is not the invitation, and an invitation under the template's envelope still serves                                 |
-| one block's override | omit it | the only block that can ever be omitted is one whose buyer content we cannot trust                                            |
-| every block omitted  | fail    | an empty page is not a page                                                                                                   |
+| Broken                                                | Result  | Why                                                                                                                                                        |
+| ----------------------------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| definition                                            | fail    | there is no structure to render                                                                                                                            |
+| theme                                                 | fail    | blocks consume tokens and nothing else                                                                                                                     |
+| content document                                      | fail    | template defaults are placeholder copy, and showing another couple's names to real guests is worse than a designed error page                              |
+| theme override                                        | degrade | a palette is not somebody's words; a correct page in the template palette still serves                                                                     |
+| envelope override                                     | degrade | the cover is not the invitation, and an invitation under the template's envelope still serves                                                              |
+| one block's override                                  | omit it | the only block that can ever be omitted is one whose buyer content we cannot trust                                                                         |
+| every block omitted                                   | fail    | an empty page is not a page                                                                                                                                |
+| a composed section id the definition has no block for | skip it | a template can genuinely lose a block, and an invitation that went dark over a change we made to a template is a failure the buyer cannot see the cause of |
 
 In every one of those cases the stored value comes back in the outcome, verbatim.
 Nothing is deleted, nothing is rewritten, and nothing throws. A guest gets a page

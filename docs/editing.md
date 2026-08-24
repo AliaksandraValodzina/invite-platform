@@ -3,6 +3,10 @@
 Stage 7, first half. A buyer fills in their own details on the template they
 bought and a guest sees them.
 
+The second half is `docs/composition.md`: which sections the invitation has, in
+what order, and in what colours. It shares this page, this document and this
+write path, so read both.
+
 Without this, stages 1 to 3 let somebody pay for an invitation they cannot put
 their own names on, which is the difference between a demo and a product.
 
@@ -17,12 +21,13 @@ and writes, as the buyer) and `src/app/dashboard/[id]/edit/`. Start at
 time, the venue, message text, swapping a photo, and which questions the reply
 form asks.
 
-**Out, and deliberately.** Adding, removing or reordering sections. Moving
-anything. New block types. A buyer edits content in slots; the composition is
-the template they bought. The other half of stage 7 is where sections move.
+**Out of this half, and now built in the other one.** Adding, removing and
+reordering sections, and choosing colours, are `docs/composition.md`. New block
+types are neither: a template's block set is authored, not chosen.
 
-The editor has no add or remove control for a list entry either, for the same
-reason one step down: which items a details list has is composition. A buyer can
+The editor still has no add or remove control for a list entry inside a block,
+and that is unchanged by composition: which items a details list has is a
+property of the section's design rather than of the page's shape. A buyer can
 change what every item says.
 
 ## The form is read out of the format
@@ -102,7 +107,9 @@ because the split is the data model.
 | Form           | Writes                   | Why it is not somewhere else                                                                                                                                    |
 | -------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | The details    | columns on `events`      | the date, the end and the time zone are the source of truth for the countdown. A block config carrying a date would be a second answer to "when is the wedding" |
+| The sections   | `event_content.content`  | composition is a key in the same document as the words, so a reorder is one transaction. `docs/composition.md`                                                  |
 | The invitation | `event_content.content`  | the buyer's words, as overrides keyed by block id                                                                                                               |
+| The colours    | `event_content.theme`    | tokens, never content, so choosing a palette cannot touch a sentence                                                                                            |
 | The reply form | rows in `rsvp_questions` | every question carries the `pii_class` the retention sweep reads                                                                                                |
 
 Each has its own button and its own action, so a failure in one cannot half apply
@@ -140,13 +147,17 @@ standing in for an invitation somebody paid for.
 
 A new revision rather than an update in place, because the table was built for
 it: "restore what it said last week" is the request that arrives the day after a
-bad edit, and a row edited in place has already thrown it away. The theme
-override is carried forward from the revision being replaced, so a buyer's
-palette is not reset by saving their words.
+bad edit, and a row edited in place has already thrown it away.
+
+Either document may be left out of a save and is then carried forward from the
+revision being replaced. That is what stops the words save resetting a buyer's
+palette, and what stops the palette save resetting their words.
 
 There is no draft state and no preview. Each save is a complete document and each
-one goes live. A draft edited over several sittings and published once is the
-other half of stage 7.
+one goes live, which is also the answer to what a guest sees while somebody is
+rearranging their sections: the order before the press or the order after it, and
+never half of one. A draft edited over several sittings and published once is
+still not built; `docs/composition.md` says what it would need.
 
 The function is `SECURITY INVOKER`, so row level security decides whose event it
 is rather than an ownership check written twice.
@@ -167,6 +178,10 @@ Content keyed to a block id the template no longer has survives every save,
 untouched. It is what a removed block leaves behind, it is reported rather than
 deleted, and an editor that tidied it up would be the only thing between a buyer
 and their words if that block came back.
+
+The same rule decides what happens when a buyer takes a section out of their own
+invitation: the words stay, and putting the section back brings them with it.
+`docs/composition.md` has the argument.
 
 ## Pictures
 
@@ -244,7 +259,9 @@ change that would replace it.
 ## The load bearing detail warning
 
 A save that moves the date, the time zone, the venue or the address on an
-invitation that already has replies stops and asks, showing the count. It is a
+invitation that already has replies stops and asks, showing the count. So does
+taking the section that carries the venue and the address off the page, because
+that is the same change expressed as a change to nothing. It is a
 confirmation and never a block, and nothing is sent to guests either way. The
 list, why it cannot be derived from the format, and how the pending save
 survives being asked about are in `docs/activation.md`.

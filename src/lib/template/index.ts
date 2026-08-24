@@ -35,14 +35,25 @@ export {
 
 export { UNIVERSAL_ENVELOPE, envelopeConfigSchema, type EnvelopeConfig } from './envelope'
 
+export { hexColourSchema } from './primitives'
+
 export {
   CONTENT_MIGRATIONS,
   CURRENT_CONTENT_VERSION,
   EMPTY_EVENT_CONTENT,
   eventContentPipeline,
   eventContentSchema,
+  eventSectionsSchema,
   type EventContent,
 } from './content'
+
+export {
+  composeSections,
+  sameSections,
+  sectionIdsOf,
+  type ComposedBlock,
+  type Composition,
+} from './composition'
 
 export {
   CURRENT_DEFINITION_VERSION,

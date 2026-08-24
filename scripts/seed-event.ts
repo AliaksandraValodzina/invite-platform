@@ -226,6 +226,17 @@ export type SeedEventInput = {
   readonly definition?: unknown
   /** Buyer overrides, keyed by block id. Defaults to none. */
   readonly content?: unknown
+  /**
+   * The buyer's theme override, stored on `event_content.theme`. Defaults to
+   * none, which is what an event that has chosen no colours carries.
+   *
+   * Unvalidated on the way through, on purpose. The claim worth testing about a
+   * palette is that a stored one this deploy cannot read degrades to the
+   * template's rather than taking the invitation off screen
+   * (src/lib/template/resolve.ts), and a fixture that could only hold a valid
+   * palette could not seed the case.
+   */
+  readonly themeOverride?: unknown
   readonly ownerEmail?: string | undefined
   /** Distinguishes template rows when several are seeded for one owner. */
   readonly templateKey?: string | undefined
@@ -400,7 +411,7 @@ export async function seedEvent(
       is_published: input.publishContent ?? true,
       content_version: (content as { version: number }).version,
       content,
-      theme: { version: 1, tokens: {} },
+      theme: input.themeOverride ?? { version: 1, tokens: {} },
     },
   })
 

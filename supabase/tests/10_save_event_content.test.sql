@@ -18,6 +18,12 @@
 --   A palette survives a save. The theme override lives beside the content on
 --   the same row, so a new revision that took the column default would put every
 --   event back to its template palette on the buyer's first save.
+--
+--   Either half may be sent on its own. A palette save carries a theme and no
+--   content, a words save carries content and no theme, and whichever half is
+--   absent comes forward from the revision being replaced. Both write one whole
+--   new published revision, so a guest never reads a document that is half of
+--   one save and half of another.
 
 begin;
 select * from no_plan();
@@ -129,6 +135,86 @@ select is(
 );
 
 
+-- A section list, which is composition ----------------------------------------
+
+select is(
+  public.save_event_content(
+    '44444444-4444-4444-4444-444444444444',
+    '{"version": 3, "blocks": {"hero": {"headline": "Perpetua & Cornelius"}}, "sections": ["rsvp", "hero"]}'::jsonb
+  ),
+  3,
+  'a composition is part of the content document, so it saves the way words do'
+);
+
+select is(
+  (select content -> 'sections' from public.event_content
+    where event_id = '44444444-4444-4444-4444-444444444444' and is_published),
+  '["rsvp", "hero"]'::jsonb,
+  'the order a buyer composed is what the published revision carries'
+);
+
+select throws_like(
+  $$insert into public.event_content
+      (owner_id, event_id, revision, is_published, content_version, content)
+    values ('11111111-1111-1111-1111-111111111111',
+            '44444444-4444-4444-4444-444444444444', 99, false, 3,
+            '{"version": 3, "blocks": {}, "sections": "hero"}'::jsonb)$$,
+  '%event_content_sections_is_array%',
+  'a section list that is not a list is refused by the schema, not only by the app'
+);
+
+
+-- A palette, saved on its own -------------------------------------------------
+-- The words are not resent, so the revision this writes has to carry them
+-- forward. A palette save that reset somebody words to the template defaults
+-- would be the worst bug in the editor.
+
+select is(
+  public.save_event_content(
+    '44444444-4444-4444-4444-444444444444',
+    null,
+    '{"version": 2, "tokens": {"color": {"accent": "#2f6f4f"}}}'::jsonb
+  ),
+  4,
+  'a palette save is a new revision too, so a colour choice is as restorable as a sentence'
+);
+
+select is(
+  (select theme -> 'tokens' -> 'color' ->> 'accent' from public.event_content
+    where event_id = '44444444-4444-4444-4444-444444444444' and is_published),
+  '#2f6f4f',
+  'the palette it was sent is the published one'
+);
+
+select is(
+  (select content from public.event_content
+    where event_id = '44444444-4444-4444-4444-444444444444' and is_published),
+  '{"version": 3, "blocks": {"hero": {"headline": "Perpetua & Cornelius"}}, "sections": ["rsvp", "hero"]}'::jsonb,
+  'and the words and the composition came forward untouched, because a palette save sent none'
+);
+
+select is(
+  (select content_version from public.event_content
+    where event_id = '44444444-4444-4444-4444-444444444444' and is_published),
+  3,
+  'content_version comes forward with the document it describes'
+);
+
+select throws_ok(
+  $$select public.save_event_content('44444444-4444-4444-4444-444444444444')$$,
+  '22023',
+  'a save must carry content, a theme, or both',
+  'a save that changes nothing is a bug in the caller rather than a new revision'
+);
+
+select is(
+  (select count(*)::integer from public.event_content
+    where event_id = '44444444-4444-4444-4444-444444444444'),
+  4,
+  'and that refusal wrote nothing either'
+);
+
+
 -- As somebody else -----------------------------------------------------------
 -- Row level security is the whole check. A stranger gets the answer somebody
 -- guessing at ids should get, which is the one an event that does not exist
@@ -141,7 +227,7 @@ set local request.jwt.claims = '{"sub": "22222222-2222-2222-2222-222222222222", 
 select throws_ok(
   $$select public.save_event_content(
       '44444444-4444-4444-4444-444444444444',
-      '{"version": 2, "blocks": {"hero": {"headline": "Mine now"}}}'::jsonb
+      '{"version": 3, "blocks": {"hero": {"headline": "Mine now"}}}'::jsonb
     )$$,
   '23503',
   'event 44444444-4444-4444-4444-444444444444 does not exist',
@@ -151,7 +237,7 @@ select throws_ok(
 select throws_ok(
   $$select public.save_event_content(
       '55555555-5555-5555-5555-555555555555',
-      '{"version": 2, "blocks": {}}'::jsonb
+      '{"version": 3, "blocks": {}}'::jsonb
     )$$,
   '23503',
   'event 55555555-5555-5555-5555-555555555555 does not exist',
@@ -176,7 +262,7 @@ set local role anon;
 select throws_ok(
   $$select public.save_event_content(
       '44444444-4444-4444-4444-444444444444',
-      '{"version": 2, "blocks": {}}'::jsonb
+      '{"version": 3, "blocks": {}}'::jsonb
     )$$,
   '42501',
   null,
