@@ -105,6 +105,16 @@ makes a disk unusable is being a function's, not being in production.
 
 An explicit `UPLOADS_DRIVER` or `UPLOADS_LOCAL_ROOT` is taken at its word.
 
+**Uploads being off is a decision, not an outage.** The captain deferred
+provisioning R2 to the day the Etsy listing publishes, alongside the Vercel Pro
+upgrade that is deferred to the same day, because nothing is for sale yet and
+the storage account needs a payment method on file. So a deployment refusing an
+upload with the sentence above is this environment working as intended, and the
+fix is the four R2 variables rather than anything in this repository. Everything
+that is not an upload works: buyer photos, the music file and envelope artwork
+are the only surfaces affected, and they are one capability with three uses,
+which is why turning them off is one decision rather than three.
+
 ## Verifying a deployment, rather than assuming it
 
 Against the deployment, not against localhost:
