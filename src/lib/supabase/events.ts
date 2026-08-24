@@ -167,7 +167,15 @@ export async function loadGuestPage(slug: string): Promise<GuestPageOutcome> {
   }
 
   if (!response.ok) {
-    return unavailable(slug, `the database answered ${response.status}`)
+    /*
+     * The status alone is not actionable. A 400 from PostgREST is almost always
+     * a column or an embedded relationship this deploy asks for and the
+     * database does not have, which is a migration that did not run, and its
+     * body names the one that is missing. That body goes to the log and not
+     * into the reason: the reason is a value the route holds while it renders a
+     * page for a guest, and PostgREST's error bodies are not written for one.
+     */
+    return unavailable(slug, `the database answered ${response.status}`, response.detail)
   }
 
   if (!Array.isArray(response.json) || response.json.length === 0) {
@@ -291,8 +299,9 @@ function readQuestions(rows: readonly unknown[]): RsvpQuestion[] {
  * different incidents. Nothing else from the row is: a reason is an operational
  * fact and a guest page is full of somebody's personal information.
  */
-function unavailable(slug: string, reason: string): GuestPageOutcome {
-  console.error(`guest page unavailable: ${slug}: ${reason}`)
+function unavailable(slug: string, reason: string, detail?: string): GuestPageOutcome {
+  const suffix = detail === undefined || detail === '' ? '' : `: ${detail}`
+  console.error(`guest page unavailable: ${slug}: ${reason}${suffix}`)
   return { kind: 'unavailable', reason }
 }
 

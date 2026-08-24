@@ -164,6 +164,23 @@ describe('loadGuestPage', () => {
     expect(line).toContain('ECONNREFUSED')
   })
 
+  it("puts the database's own words in the log line, since a bare status is not actionable", async () => {
+    stubEnvironment()
+    stubFetch({
+      status: 400,
+      body: { message: 'column events.serving_state does not exist' },
+    })
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const outcome = await loadGuestPage('emma-jake-11ea91')
+
+    expect(String(logged.mock.calls[0]?.[0])).toContain('events.serving_state does not exist')
+    // And not into the reason, which is a value a page is rendered from.
+    if (outcome.kind === 'unavailable') {
+      expect(outcome.reason).not.toContain('serving_state does not exist')
+    }
+  })
+
   it('does not log for a slug that simply has no row, which is not a fault', async () => {
     stubEnvironment()
     stubFetch({ body: [] })
