@@ -105,9 +105,71 @@ free tier project with the built-in sender cannot complete a sign-in against
 this app at all. That is not the constraint it first looks like: the built-in
 sender is rate limited to two emails an hour and Supabase documents it as being
 for development, so it was never going to deliver to real buyers. Configuring
-the custom SMTP provider `AGENTS.md` already calls for (Resend or Postmark,
-never raw SMTP) is what unlocks both the template and delivery, and it is the
-same step either way.
+the custom SMTP provider `AGENTS.md` already calls for is what unlocks both the
+template and delivery, and it is the same step either way. Resend was chosen
+over Postmark; the checklist is above.
+
+### Sending email: the checklist
+
+Resend, chosen over Postmark because the free tier covers this and it is the
+lighter setup for one person. Nothing below can be done from this repository:
+the account and the DNS records are the domain owner's, and the values marked
+_generated_ only exist once the domain is added in Resend.
+
+Do them in this order. Steps 3 and 4 fail in confusing ways if step 2 has not
+verified yet.
+
+**1. Create the Resend account and add the sending domain.** Use a subdomain,
+`send.mirthly.app`, rather than the root. Sending reputation attaches to the
+domain that sends, and keeping it off the root means a bad month for email
+cannot follow the invitation links guests are opening.
+
+**2. Add the records Resend shows, at the registrar.** Resend generates the
+DKIM key and names the bounce host for the region chosen, so copy them from its
+screen rather than from here. The shape is:
+
+| Type  | Name                | Value                                                |
+| ----- | ------------------- | ---------------------------------------------------- |
+| `MX`  | `send`              | _generated_ (Resend's bounce host, priority 10)      |
+| `TXT` | `send`              | `v=spf1 include:amazonses.com ~all`                  |
+| `TXT` | `resend._domainkey` | _generated_ (the DKIM public key)                    |
+| `TXT` | `_dmarc`            | `v=DMARC1; p=none; rua=mailto:<an address you read>` |
+
+`p=none` on purpose to start: it asks for reports without telling anybody to
+reject mail, which is what a domain with no sending history wants. Tighten it
+after the reports come back clean.
+
+Wait for Resend to report the domain verified. It is usually minutes.
+
+**3. Point the project's auth settings at Resend**, under custom SMTP:
+
+| Field        | Value                                       |
+| ------------ | ------------------------------------------- |
+| Host         | `smtp.resend.com`                           |
+| Port         | `587`                                       |
+| Username     | `resend` (the literal word, not an address) |
+| Password     | the Resend API key                          |
+| Sender email | an address at the verified sending domain   |
+| Sender name  | what a buyer should see in their inbox      |
+
+The API key is a secret and belongs only in that settings page. It does not go
+in this repository, in Vercel, or in a commit.
+
+**4. Install the magic link template.** Custom SMTP is what makes this possible
+at all: a project on the built-in sender is refused with "Email template
+modification is not available for free tier projects using the default email
+provider". The content is `supabase/templates/magic-link.html`, verbatim, into
+the project's magic link template.
+
+**5. Raise the send rate limit.** The built-in sender caps it at two an hour,
+and that cap does not lift on its own when SMTP changes. A single buyer asking
+for a second link because they lost the first would otherwise be rate limited.
+
+**6. Verify with a real mailbox, not a minted token.** Ask for a sign-in link
+through `/login`, open it from the mail, and confirm it lands signed in. Then do
+it again from a claim link and confirm it lands on the invitation rather than
+the dashboard. A minted `token_hash` link proves the app and says nothing about
+the template; only a link out of a mailbox proves both.
 
 ## Migrations reach a hosted project the same way they reach a local one
 

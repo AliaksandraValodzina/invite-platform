@@ -8,7 +8,7 @@ An **interactive invitation website platform**. A buyer purchases an invitation 
 
 **v1 is not an app, it is a fulfilment pipe for listings the captain already sells.** Anything that does not move a buyer from *Etsy purchase → live site → RSVPs captured* is out of scope. That sentence is the captain's and it settles most scope arguments.
 
-Stack: **Next.js App Router + TypeScript (strict) + Tailwind + Supabase (Postgres, RLS) + Zod**, deployed on Vercel. Email via **Resend or Postmark, never raw SMTP** — deliverability from a new domain needs SPF/DKIM/DMARC and a warm-up.
+Stack: **Next.js App Router + TypeScript (strict) + Tailwind + Supabase (Postgres, RLS) + Zod**, deployed on Vercel. Email is **Resend** (chosen 2026-08-24 over Postmark; never raw SMTP) — deliverability from a new domain needs SPF/DKIM/DMARC and a warm-up, and it is not wired up yet: `docs/hosting.md` has the checklist and says why a magic link cannot sign anybody in until it is.
 
 **This Next is not the one you remember.** Read the guide under `node_modules/next/dist/docs/` before writing Next code; `middleware.ts` is now `proxy.ts`, and route segment config is read by static analysis so it will not take an imported constant.
 
