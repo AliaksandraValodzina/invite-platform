@@ -81,6 +81,7 @@ function stubFetch(
 afterEach(() => {
   vi.unstubAllEnvs()
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
 })
 
 describe('isPossibleSlug', () => {
@@ -142,6 +143,35 @@ describe('loadGuestPage', () => {
 
     expect(outcome.kind).toBe('unavailable')
     if (outcome.kind === 'unavailable') expect(outcome.reason).toContain('ECONNREFUSED')
+  })
+
+  /*
+   * The notice a guest sees says nothing about why, on purpose. An operator
+   * still has to be able to tell "the database is unreachable" from "the row is
+   * the wrong shape", and before this the reason was computed and dropped, so
+   * from outside the two were the same blank screen.
+   */
+  it('writes the reason to the server log, where the notice does not show it', async () => {
+    stubEnvironment()
+    stubFetch(new Error('connect ECONNREFUSED'))
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await loadGuestPage('emma-jake-11ea91')
+
+    expect(logged).toHaveBeenCalledTimes(1)
+    const line = String(logged.mock.calls[0]?.[0])
+    expect(line).toContain('emma-jake-11ea91')
+    expect(line).toContain('ECONNREFUSED')
+  })
+
+  it('does not log for a slug that simply has no row, which is not a fault', async () => {
+    stubEnvironment()
+    stubFetch({ body: [] })
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await loadGuestPage('emma-jake-11ea91')
+
+    expect(logged).not.toHaveBeenCalled()
   })
 
   it('reports an error status as unavailable, with the status in the reason', async () => {
