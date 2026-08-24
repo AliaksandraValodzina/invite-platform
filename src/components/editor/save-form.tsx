@@ -11,6 +11,14 @@ import { CONFIRM_FIELD, CONFIRM_REPLAY_FIELD, type SaveResult } from '@/lib/edit
  * this component knows nothing about what it is wrapping: it owns the submit
  * button, the pending state and the result, and nothing else.
  *
+ * `submitLabel` may be null, and then the children own the buttons. That is for
+ * the composition panel, where every control is its own submit button carrying
+ * its own command (`up:hero`, `remove:venue-map`) and there is nothing left for
+ * one button at the bottom to mean. The status, the failure list and the
+ * confirmation panel are the same in both shapes, which is the reason this is a
+ * prop rather than a second component: a save that reports differently
+ * depending on which form it came from is two answers to one question.
+ *
  * `useActionState` rather than a redirect carrying a query string, because a
  * failed save has field paths to show and a query string is a bad place to put
  * a list of them. It also keeps what the buyer typed on screen, which is the
@@ -42,7 +50,7 @@ export function SaveForm({
   children,
 }: {
   readonly action: (previous: SaveResult, formData: FormData) => Promise<SaveResult>
-  readonly submitLabel: string
+  readonly submitLabel: string | null
   readonly children: React.ReactNode
 }) {
   const [result, formAction, pending] = useActionState(action, { status: 'idle' } as SaveResult)
@@ -52,13 +60,15 @@ export function SaveForm({
       {children}
 
       <div className="flex items-center gap-4">
-        <button
-          type="submit"
-          disabled={pending}
-          className="rounded bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-        >
-          {pending ? 'Saving...' : submitLabel}
-        </button>
+        {submitLabel !== null && (
+          <button
+            type="submit"
+            disabled={pending}
+            className="rounded bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+          >
+            {pending ? 'Saving...' : submitLabel}
+          </button>
+        )}
 
         {result.status === 'saved' && (
           <p data-save-status="saved" className="text-sm text-green-800">

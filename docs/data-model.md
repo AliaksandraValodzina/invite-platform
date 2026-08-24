@@ -325,6 +325,14 @@ seeing a half-finished page. A single row with draft and published columns is
 the same amount of code and throws away every previous version, and "restore
 what it said last week" is the request that arrives the day after a bad edit.
 
+Its two documents are written by one function, `public.save_event_content`, and
+either may be left out of a call and is then carried forward from the revision
+being replaced. That is what lets the words save leave a buyer's palette alone
+and the palette save leave their words alone while both still write one whole
+new published revision. The buyer's section order lives inside `content`
+alongside their words for the same reason: a reorder is then one transaction, so
+no guest can read a page with half of one applied. `docs/composition.md`.
+
 ## Enums
 
 Enums start small. Adding a value is `alter type ... add value`, which is cheap;

@@ -24,12 +24,21 @@
  *                          buyer content we cannot trust, and the template
  *                          default is not a stand-in for a buyer's words.
  *   every block omitted    fail. An empty page is not a page.
+ *   a composed section     skip it, render the rest, report it. A template can
+ *     names no known block  genuinely lose a block, and an invitation that went
+ *                          dark because of a change we made to a template is a
+ *                          failure the buyer cannot see the cause of.
  *
  * Nothing is deleted or rewritten in any of those cases. Every rejected value
  * comes back in the outcome, verbatim, so it can be logged and repaired.
+ *
+ * Which sections a page has, and in what order, is the buyer's
+ * `content.sections` when they have one and the template's own block order when
+ * they have not. See ./composition.ts.
  */
 
 import { BLOCK_CONFIG_SCHEMAS } from './blocks'
+import { composeSections } from './composition'
 import { eventContentPipeline, type EventContent } from './content'
 import { envelopeConfigSchema, UNIVERSAL_ENVELOPE, type EnvelopeConfig } from './envelope'
 import {
@@ -97,11 +106,30 @@ export type ResolvedPage<Block> = {
   readonly migrated: Readonly<Record<DocumentName, boolean>>
   readonly omittedBlocks: readonly OmittedBlock[]
   /**
-   * Overrides keyed to block ids the definition no longer contains, which is
-   * what a removed block leaves behind. Reported so a removal is visible;
+   * Overrides keyed to block ids the DEFINITION does not contain, which is what
+   * a block removed from a template leaves behind. Reported so it is visible;
    * never deleted, because the buyer wrote it.
+   *
+   * A section the buyer took out of their own composition is not this. The
+   * template still has that block, so the content still has somewhere to go
+   * back to: it is reported as `removedSections` instead.
    */
   readonly orphanedContent: readonly OrphanedContent[]
+  /**
+   * Template blocks the buyer's composition leaves off the page, by id.
+   *
+   * Their words are still stored and are untouched by every save, which is what
+   * makes putting a section back the same thing as never having removed it.
+   */
+  readonly removedSections: readonly string[]
+  /**
+   * Ids the buyer's composition names that this template has no block for.
+   *
+   * Skipped rather than fatal, and reported rather than swept up. It is what a
+   * template that lost a block leaves behind in a composition, and the
+   * composition is not rewritten to hide it.
+   */
+  readonly unknownSections: readonly string[]
   /** Set when the buyer's theme override was rejected and the template theme was used. */
   readonly themeOverrideRejected: {
     readonly issues: readonly DocumentIssue[]
@@ -185,16 +213,15 @@ export function resolveEventPage<D extends DefinitionShape = TemplateDefinition>
     ? mergeThemeTokens(theme.document.tokens, themeOverride.document.tokens)
     : theme.document.tokens
 
+  const composition = composeSections(definition.document.blocks, content.document.sections)
+
   const blocks: D['blocks'][number][] = []
   const omittedBlocks: OmittedBlock[] = []
-  const usedContentIds = new Set<string>()
 
-  for (const block of definition.document.blocks) {
+  for (const block of composition.blocks) {
     const override = Object.hasOwn(content.document.blocks, block.id)
       ? content.document.blocks[block.id]
       : undefined
-
-    if (override !== undefined) usedContentIds.add(block.id)
 
     if (override === undefined || Object.keys(override).length === 0) {
       blocks.push(block as D['blocks'][number])
@@ -239,22 +266,36 @@ export function resolveEventPage<D extends DefinitionShape = TemplateDefinition>
       document: 'content',
       reason: 'no-renderable-blocks',
       message:
-        'every block was omitted, so there is no page to serve. The buyer content is untouched; ' +
-        'see the stored value and repair it rather than rewriting the row.',
-      issues: omittedBlocks.flatMap((omitted) =>
-        omitted.issues.map((issue) => ({
-          path: `blocks.${omitted.id}.${issue.path}`,
-          message: issue.message,
-        }))
-      ),
+        'nothing was left to draw, so there is no page to serve. Either every composed section ' +
+        "was omitted, or the composition names no section this template has. The buyer's " +
+        'content is untouched; see the stored value and repair it rather than rewriting the row.',
+      issues: [
+        ...omittedBlocks.flatMap((omitted) =>
+          omitted.issues.map((issue) => ({
+            path: `blocks.${omitted.id}.${issue.path}`,
+            message: issue.message,
+          }))
+        ),
+        ...composition.unknown.map((id) => ({
+          path: `sections.${id}`,
+          message: 'this template has no section with that id',
+        })),
+      ],
       stored: stored.content,
     }
   }
 
   const envelope = resolveEnvelope(definition.document.envelope, content.document.envelope)
 
+  /*
+   * Definition relative, and deliberately not composition relative. Content
+   * keyed to a section the buyer removed is not orphaned: the template still
+   * has that block, so the words have somewhere to go back to the moment the
+   * section does.
+   */
+  const definitionIds = new Set(definition.document.blocks.map((block) => block.id))
   const orphanedContent: OrphanedContent[] = Object.entries(content.document.blocks)
-    .filter(([id]) => !usedContentIds.has(id))
+    .filter(([id]) => !definitionIds.has(id))
     .map(([id, storedOverride]) => ({ id, storedOverride }))
 
   return {
@@ -273,6 +314,8 @@ export function resolveEventPage<D extends DefinitionShape = TemplateDefinition>
       },
       omittedBlocks,
       orphanedContent,
+      removedSections: composition.removed,
+      unknownSections: composition.unknown,
       themeOverrideRejected: themeOverride.ok
         ? null
         : { issues: themeOverride.issues, stored: themeOverride.stored },

@@ -9,8 +9,10 @@ reply path, the upload capability, the guided form a buyer fills in, and
 activation: an order becomes a claim link, the buyer clicks it and gets their own
 copy, fills it in and publishes, and a slug at `/e/<slug>` resolves to an event,
 a template and a published revision, renders through the blocks and themes, and
-takes a reply that the buyer reads back at `/dashboard`. Sections cannot be
-added, removed or moved. That is a separate task.
+takes a reply that the buyer reads back at `/dashboard`. The buyer also decides
+which sections their invitation has, in what order, and in what colours. What is
+not built is a catalogue of designs to add a section from: what a buyer can put
+on their page is what the template they bought comes with.
 
 `docs/activation.md` is the order-to-invitation path: the two links and why they
 must never be conflated, how a claim survives the trip through a mailbox, why a
@@ -23,6 +25,12 @@ the date, the venue, the words, the photographs and the reply form are filled in
 Its form is generated from the block schemas rather than written per block type,
 so a block added later gets an editable form with nobody touching the editor,
 and a save writes only what differs from the template.
+
+`docs/composition.md` is the other half of the editor: moving a section, taking
+one out, putting it back with every word still in it, and the eight colours the
+page is drawn from. It says why a section list is an override rather than a
+snapshot, what a guest sees while somebody is rearranging, and why a palette this
+deploy cannot read still renders the invitation.
 
 `docs/serving.md` is the place to start on the guest page: the four serving
 states, the read path, and why the page's cache lifetime is a privacy control

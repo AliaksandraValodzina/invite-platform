@@ -2,24 +2,41 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import { notFound, redirect } from 'next/navigation'
 
+import { CompositionPanel } from '@/components/editor/composition-panel'
+import { PaletteFields } from '@/components/editor/palette-fields'
 import { SaveForm } from '@/components/editor/save-form'
 import { SectionFields } from '@/components/editor/section-fields'
-import { editableSections, sectionPrefix, type EditableSection } from '@/lib/editor'
+import {
+  PALETTE_FIELD,
+  PALETTE_RESET,
+  compositionView,
+  editableSections,
+  sectionPrefix,
+  type CompositionView,
+  type EditableSection,
+  type PaletteColours,
+} from '@/lib/editor'
 import { parseWallClock } from '@/lib/event/time'
 import { DEFAULT_RSVP_QUESTIONS } from '@/lib/rsvp/questions'
 import { currentBuyer } from '@/lib/supabase/buyer'
 import { loadEditableEvent, type EditableEvent } from '@/lib/supabase/editing'
 import {
   EMPTY_EVENT_CONTENT,
+  EMPTY_THEME_OVERRIDE,
   eventContentPipeline,
+  mergeThemeTokens,
   templateDefinitionPipeline,
+  themeOverridePipeline,
+  themePipeline,
   type DocumentIssue,
 } from '@/lib/template'
 
 import {
   publishInvitation,
+  saveComposition,
   saveDetails,
   saveInvitation,
+  savePalette,
   saveQuestions,
   unpublishInvitation,
 } from './actions'
@@ -34,15 +51,19 @@ import {
  *   The details     the event row. The date, the end and the time zone are the
  *                   source of truth for the countdown, so they are edited here
  *                   and never inside a section.
- *   The invitation  the sections, drawn from the template definition. Every
- *                   control on it was read out of a block's own schema by
- *                   src/lib/editor/fields.ts. Nothing on this page knows what a
- *                   hero is.
+ *   The sections    `content.sections`, which is which sections the invitation
+ *                   has and in what order. See docs/composition.md.
+ *   The invitation  what each of those sections says, drawn from the template
+ *                   definition. Every control on it was read out of a block's own
+ *                   schema by src/lib/editor/fields.ts. Nothing on this page
+ *                   knows what a hero is.
+ *   The colours     `event_content.theme`, the buyer's palette as a theme
+ *                   override. Tokens, never content.
  *   The reply form  rows in `rsvp_questions`, chosen from the set we classified.
  *
- * What this page deliberately does not offer: adding, removing or reordering
- * sections, and moving anything. A buyer fills in the slots; the composition is
- * the template they bought. See docs/editing.md.
+ * What this page deliberately does not offer: a catalogue of designs to add a
+ * section from. The sections a buyer can put on their invitation are the ones
+ * the template they bought comes with. See docs/composition.md.
  *
  * `force-dynamic` for the same reason the dashboard is: this is one person's
  * own event assembled from their own session, and the no-store header that says
@@ -118,7 +139,9 @@ export default async function EditPage({ params, searchParams }: PageProps) {
   return (
     <Shell event={event} justClaimed={justClaimed}>
       <Details event={event} />
+      <Sections event={event} view={compositionView(definition.document, content.document)} />
       <Invitation event={event} sections={sections} orphans={orphans} />
+      <Colours event={event} />
       <ReplyForm event={event} />
       <Publication event={event} />
     </Shell>
@@ -225,6 +248,44 @@ function Details({ event }: { readonly event: EditableEvent }) {
   )
 }
 
+// The sections ----------------------------------------------------------------
+
+/**
+ * Which sections this invitation has, and in what order.
+ *
+ * Above the fields rather than below them, because it is the shape of the page
+ * and the fields are what goes in it, and because a section a buyer has just
+ * taken out has no form below to look for.
+ */
+function Sections({
+  event,
+  view,
+}: {
+  readonly event: EditableEvent
+  readonly view: CompositionView
+}) {
+  return (
+    <section className="flex flex-col gap-4">
+      <div>
+        <h2 className="text-lg font-medium">The sections</h2>
+        <p className="text-sm text-slate-600">
+          The order guests read them in. Taking one out keeps everything you wrote in it, so putting
+          it back is the same as never having removed it.
+        </p>
+      </div>
+
+      {/*
+       * No submit button of its own: every control inside is one. See
+       * src/lib/editor/composition.ts for why one press is one whole saved
+       * order rather than an edit somebody has to commit.
+       */}
+      <SaveForm action={saveComposition.bind(null, event.id)} submitLabel={null}>
+        <CompositionPanel view={view} live={event.state === 'live' || event.state === 'grace'} />
+      </SaveForm>
+    </section>
+  )
+}
+
 // The invitation --------------------------------------------------------------
 
 function Invitation({
@@ -286,6 +347,85 @@ function Invitation({
             />
           </fieldset>
         ))}
+      </SaveForm>
+    </section>
+  )
+}
+
+// The colours ------------------------------------------------------------------
+
+/**
+ * The buyer's palette.
+ *
+ * Its own form and its own write, for the same reason the other three are: the
+ * palette lives in `event_content.theme` rather than in the content document,
+ * and a failure in one save must not half apply another. Choosing colours cannot
+ * touch a sentence, and saving a sentence cannot reset a colour.
+ *
+ * A stored palette this deploy cannot read is not repaired here and is not
+ * hidden either. The guest page is already falling back to the template's own
+ * colours and reporting it (src/lib/template/resolve.ts); the honest thing for
+ * the person who has to fix it is to be told that is what is happening, and to
+ * be shown the colours that are actually on the page.
+ */
+function Colours({ event }: { readonly event: EditableEvent }) {
+  const template = themePipeline.load(event.templateTheme)
+
+  if (!template.ok) {
+    return (
+      <section className="flex flex-col gap-4">
+        <h2 className="text-lg font-medium">The colours</h2>
+        <Problem
+          title="This template's colours could not be read"
+          message={template.message}
+          issues={template.issues}
+        />
+      </section>
+    )
+  }
+
+  const override = themeOverridePipeline.load(event.themeOverride ?? EMPTY_THEME_OVERRIDE)
+  const colours: PaletteColours = override.ok
+    ? mergeThemeTokens(template.document.tokens, override.document.tokens).color
+    : template.document.tokens.color
+
+  const chosen = override.ok && override.document.tokens.color !== undefined
+
+  return (
+    <section className="flex flex-col gap-4">
+      <div>
+        <h2 className="text-lg font-medium">The colours</h2>
+        <p className="text-sm text-slate-600">
+          {chosen
+            ? 'Your own colours. Everything on the invitation is drawn from these eight, so nothing on the page can be a colour that is not here.'
+            : "The template's own colours. Change one and the invitation follows yours instead."}
+        </p>
+      </div>
+
+      {!override.ok && (
+        <p
+          data-testid="palette-rejected"
+          className="rounded bg-amber-50 p-3 text-sm text-amber-900"
+        >
+          The colours saved on this invitation are not ones this version can read, so guests are
+          being shown the template&apos;s instead and the invitation is still on screen. Nothing has
+          been deleted. Saving below replaces them.
+        </p>
+      )}
+
+      <SaveForm action={savePalette.bind(null, event.id)} submitLabel="Save the colours">
+        <PaletteFields colours={colours} />
+
+        {chosen && (
+          <button
+            type="submit"
+            name={PALETTE_FIELD}
+            value={PALETTE_RESET}
+            className="self-start rounded border border-slate-300 px-3 py-1 text-sm"
+          >
+            Go back to the template&apos;s colours
+          </button>
+        )}
       </SaveForm>
     </section>
   )

@@ -4,9 +4,16 @@
  * Two halves, both pure, both testable without a database.
  *
  * `editableSections` turns a template definition and a buyer's stored content
- * into the list the form is drawn from: one entry per block, plus the envelope,
- * each carrying the fields the format declares, the template's default, and the
- * value as it stands. Nothing here knows what a hero is.
+ * into the list the form is drawn from: one entry per section the invitation
+ * has, plus the envelope, each carrying the fields the format declares, the
+ * template's default, and the value as it stands. Nothing here knows what a hero
+ * is.
+ *
+ * It follows the buyer's own composition, in their order, and it leaves out a
+ * section they removed. A form for a section a guest cannot see would be an
+ * invitation to type into a page that is not there. The words behind it are
+ * still stored and are still untouched by every save, which is what makes
+ * putting the section back cost nothing. See ./composition.ts.
  *
  * `buildContentDocument` turns the overrides a save produced back into a whole
  * content document, and `checkContent` is the gate in front of writing it.
@@ -39,6 +46,7 @@ import {
   CURRENT_CONTENT_VERSION,
   UNIVERSAL_ENVELOPE,
   applyOverride,
+  composeSections,
   envelopeConfigSchema,
   eventContentPipeline,
   toIssues,
@@ -97,7 +105,9 @@ export function editableSections(
   content: EventContent,
   configSchemas: BlockConfigSchemas = BLOCK_CONFIG_SCHEMAS
 ): readonly EditableSection[] {
-  const sections: EditableSection[] = definition.blocks.map((block) => {
+  const composed = composeSections(definition.blocks, content.sections)
+
+  const sections: EditableSection[] = composed.blocks.map((block) => {
     const override = Object.hasOwn(content.blocks, block.id) ? content.blocks[block.id] : undefined
     const schema = Object.hasOwn(configSchemas, block.type) ? configSchemas[block.type] : undefined
     const base = isRecord(block.config) ? block.config : {}
@@ -151,13 +161,16 @@ export function editableSections(
 /**
  * The whole content document a save writes.
  *
- * Built from the previous one rather than from nothing, so two things survive
+ * Built from the previous one rather than from nothing, so three things survive
  * that the form knows nothing about: an override for a block id the definition
- * no longer contains, and any block the editor did not offer. An override that
- * came back empty is removed rather than stored as `{}`, because a buyer who
- * put every field back the way the template had it has not overridden anything,
- * and an empty object here would be an event that stopped tracking a fix to the
- * template's default copy.
+ * no longer contains, any block the editor did not offer, and the composition.
+ * An override that came back empty is removed rather than stored as `{}`,
+ * because a buyer who put every field back the way the template had it has not
+ * overridden anything, and an empty object here would be an event that stopped
+ * tracking a fix to the template's default copy.
+ *
+ * The composition is carried across untouched, which is what stops a save of the
+ * words from quietly putting a removed section back or resetting an order.
  */
 export function buildContentDocument(
   previous: EventContent,
@@ -182,7 +195,33 @@ export function buildContentDocument(
   return {
     version: CURRENT_CONTENT_VERSION,
     blocks,
+    ...(previous.sections === undefined ? {} : { sections: previous.sections }),
     ...(keepEnvelope ? { envelope } : {}),
+  }
+}
+
+/**
+ * The same content document under a different composition.
+ *
+ * `undefined` stores no list at all, which is what the template's own order is
+ * written as: composition is an override like the words are, so an invitation
+ * that ends up back where the template had it stops carrying one and a section
+ * the template gains later reaches it.
+ *
+ * Nothing else moves. `blocks` is copied across whole, including the words
+ * behind a section that is being removed, because those words are the buyer's
+ * only copy and a removal is not a decision to throw them away.
+ */
+export function withSections(
+  previous: EventContent,
+  sections: readonly string[] | undefined
+): EventContent {
+  const { sections: _replaced, ...rest } = previous
+
+  return {
+    ...rest,
+    version: CURRENT_CONTENT_VERSION,
+    ...(sections === undefined ? {} : { sections: [...sections] }),
   }
 }
 
@@ -201,6 +240,13 @@ export type ContentCheck =
  * selects, because content on its own does not know which types its ids point
  * at and only the definition does.
  *
+ * Only the sections this invitation actually has are checked, and that is
+ * deliberate rather than an economy. A section the buyer removed is not drawn,
+ * so whether its stored words still fit the template says nothing about whether
+ * this save can be served; checking it anyway would mean a buyer who took a
+ * broken section out could then save nothing at all. It is checked again the
+ * moment the section comes back, which is the moment it starts mattering.
+ *
  * Issue paths are the ones a form can point at: `blocks.<id>.<field>`.
  */
 export function checkContent(
@@ -213,7 +259,7 @@ export function checkContent(
 
   const issues: DocumentIssue[] = []
 
-  for (const block of definition.blocks) {
+  for (const block of composeSections(definition.blocks, candidate.sections).blocks) {
     const override = Object.hasOwn(candidate.blocks, block.id) ? candidate.blocks[block.id] : {}
     const schema = Object.hasOwn(configSchemas, block.type) ? configSchemas[block.type] : undefined
     if (schema === undefined) continue

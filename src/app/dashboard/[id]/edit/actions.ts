@@ -3,16 +3,26 @@
 import { revalidatePath, updateTag } from 'next/cache'
 
 import {
+  COMPOSITION_FIELD,
+  NO_PALETTE_OVERRIDE,
+  PALETTE_FIELD,
+  PALETTE_RESET,
+  applyCompositionCommand,
   blockDetailChanges,
   buildContentDocument,
   checkContent,
   editableSections,
   isLoadBearingBlock,
   overrideFor,
+  paletteOverride,
+  parseCompositionCommand,
   pictureFields,
+  readPalette,
   readValue,
   scheduleDetailChanges,
   sectionPrefix,
+  withSections,
+  type CompositionCommandKind,
   type EditableSection,
   type JsonRecord,
   type PictureValue,
@@ -45,6 +55,7 @@ import {
   retireQuestion,
   saveEventContent,
   saveEventDetails,
+  saveEventTheme,
   setEventStatus,
   setQuestionRequired,
   type EditableEvent,
@@ -52,8 +63,11 @@ import {
 } from '@/lib/supabase/editing'
 import {
   EMPTY_EVENT_CONTENT,
+  applyOverride,
   eventContentPipeline,
   templateDefinitionPipeline,
+  themePipeline,
+  type EventContent,
   type TemplateDefinition,
 } from '@/lib/template'
 import type { BuyerSession } from '@/lib/supabase/buyer'
@@ -92,6 +106,16 @@ import type { BuyerSession } from '@/lib/supabase/buyer'
  *
  * Two more saves live here, and they are one column: publishing, and taking a
  * page back down.
+ *
+ * ## And two that arrived with composition
+ *
+ *   the sections  `content.sections`, which is which sections the invitation has
+ *                 and in what order. It shares a document and a write path with
+ *                 the words, so one press is one whole new published revision
+ *                 and a guest never reads half a reorder.
+ *   the colours   `event_content.theme`, written through the same function with
+ *                 the halves the other way round, so choosing a palette cannot
+ *                 touch a sentence.
  */
 
 // The invitation --------------------------------------------------------------
@@ -113,15 +137,10 @@ export async function saveInvitation(
 
   const { buyer, event, definition } = loaded
 
-  const stored = eventContentPipeline.load(event.content ?? EMPTY_EVENT_CONTENT)
-  if (!stored.ok) {
-    return failed(
-      'Your saved content could not be read, so nothing was changed. ' + stored.message,
-      [...stored.issues]
-    )
-  }
+  const stored = readStoredContent(event)
+  if ('failure' in stored) return stored.failure
 
-  const sections = editableSections(definition, stored.document)
+  const sections = editableSections(definition, stored.content)
 
   const pictures = await resolvePictures(buyer, event, sections, formData)
   if ('failure' in pictures) return pictures.failure
@@ -154,7 +173,7 @@ export async function saveInvitation(
     else blocks[section.id] = override
   }
 
-  const candidate = buildContentDocument(stored.document, { blocks, envelope })
+  const candidate = buildContentDocument(stored.content, { blocks, envelope })
   const checked = checkContent(definition, candidate)
 
   if (!checked.ok) {
@@ -169,6 +188,168 @@ export async function saveInvitation(
 
   dropCachedCopies(eventId, event.slug)
   return saved('Saved. Guests see this now.')
+}
+
+// The sections ----------------------------------------------------------------
+
+/**
+ * One pressed button: move a section up or down, take one out, or put one back.
+ *
+ * Composition is a key in the content document, so this is the same write path
+ * the words take: a whole new published revision, in one transaction. That is
+ * what answers "what does a guest see mid-edit". They see the order before the
+ * press or the order after it, and never a page with a section half moved,
+ * because there is no request in which a page exists in between.
+ *
+ * There is still no draft state, which means an intermediate order on a
+ * published invitation is an order guests can see. The honest answer to that is
+ * the one that already exists rather than a new one: take the invitation down
+ * while rearranging and put it back up. The panel says so.
+ *
+ * ## Removing a section keeps its words
+ *
+ * `withSections` copies `blocks` across whole, including the words behind the
+ * section being removed. Putting it back is therefore the same thing as never
+ * having removed it, which is the only defensible answer for somebody who
+ * pressed the wrong button: the stored document is the buyer's only copy of what
+ * they wrote. See docs/composition.md.
+ */
+export async function saveComposition(
+  eventId: string,
+  _previous: SaveResult,
+  submitted: FormData
+): Promise<SaveResult> {
+  const formData = replayedForm(submitted)
+
+  const loaded = await open(eventId)
+  if ('failure' in loaded) return loaded.failure
+
+  const { buyer, event, definition } = loaded
+
+  const command = parseCompositionCommand(formData.get(COMPOSITION_FIELD))
+  if (command === null) {
+    return failed('That control could not be read, so nothing was changed.')
+  }
+
+  const stored = readStoredContent(event)
+  if ('failure' in stored) return stored.failure
+
+  const change = applyCompositionCommand(definition, stored.content, command)
+  if (!change.ok) return failed(change.message)
+
+  const candidate = withSections(stored.content, change.sections)
+  const checked = checkContent(definition, candidate)
+  if (!checked.ok) {
+    return failed('That change could not be saved, so nothing was.', [...checked.issues])
+  }
+
+  /*
+   * Only a removal asks, and only when the section carries a fact a guest plans
+   * a journey around. Taking the venue and the address off a page twelve people
+   * have already replied to is the same harm as changing them, expressed as a
+   * change to nothing. Putting a section back is not asked about: it restores
+   * what guests could read before and takes nothing away. Reordering is not
+   * either, because the same facts in a different order are the same facts.
+   */
+  const changes =
+    command.kind === 'remove'
+      ? blockDetailChanges(
+          definition.blocks.find((block) => block.id === command.id)?.type ?? '',
+          mergedConfigOf(definition, stored.content, command.id),
+          {}
+        )
+      : []
+
+  const question = await askAboutChanges(buyer, eventId, changes, submitted)
+  if (question !== null) return question
+
+  const written = await saveEventContent(buyer, eventId, checked.content)
+  if (!written.ok) return failed(written.message, [{ path: 'database', message: written.detail }])
+
+  dropCachedCopies(eventId, event.slug)
+  return saved(COMPOSITION_WORDS[command.kind])
+}
+
+const COMPOSITION_WORDS: Readonly<Record<CompositionCommandKind, string>> = {
+  up: 'Moved. Guests read the sections in this order now.',
+  down: 'Moved. Guests read the sections in this order now.',
+  remove:
+    'Taken off the invitation. What you wrote in it is kept, and putting it back brings it with it.',
+  add: 'Put back, at the end. Move it up to where you want it.',
+}
+
+// The colours ------------------------------------------------------------------
+
+/**
+ * The buyer's palette, written to `event_content.theme`.
+ *
+ * Nothing on the guest page's read path was tightened to make this work, and
+ * that is deliberate. `resolveEventPage` has always fallen back to the
+ * template's theme when a stored override does not validate, and reported it
+ * rather than failing the page. A palette is not somebody's words: an invitation
+ * in the wrong colours still tells guests where to be, and one that refuses to
+ * render does not. That fallback is the safety net under everything here.
+ *
+ * What is tightened instead is the form. Colours arrive from colour inputs, so a
+ * browser hands back a hex, and `accentInk` is a choice between the page colour
+ * and the card colour rather than a ninth swatch, because the token schema pins
+ * it to one of those two (src/lib/editor/palette.ts). A value this cannot read
+ * is refused with the field named, which is a form saying which box is wrong,
+ * and nothing is written.
+ *
+ * Contrast is reported beside the controls and never enforced. The palette
+ * belongs to the buyer; telling them their guests will struggle to read it is
+ * the honest thing that is also true.
+ */
+export async function savePalette(
+  eventId: string,
+  _previous: SaveResult,
+  formData: FormData
+): Promise<SaveResult> {
+  const loaded = await open(eventId)
+  if ('failure' in loaded) return loaded.failure
+
+  const { buyer, event } = loaded
+
+  if (formData.get(PALETTE_FIELD) === PALETTE_RESET) {
+    const cleared = await saveEventTheme(buyer, eventId, NO_PALETTE_OVERRIDE)
+    if (!cleared.ok) return failed(cleared.message, [{ path: 'database', message: cleared.detail }])
+
+    dropCachedCopies(eventId, event.slug)
+    return saved("Back to the template's own colours.")
+  }
+
+  const template = themePipeline.load(event.templateTheme)
+  if (!template.ok) {
+    /*
+     * The comparison that decides whether a palette is an override at all needs
+     * the template's own, so without it there is nothing to compare against and
+     * writing anyway would store a palette that can never go back to being no
+     * palette. Nothing is changed.
+     */
+    return failed("This template's colours could not be read, so nothing was changed.", [
+      ...template.issues,
+    ])
+  }
+
+  const palette = readPalette(formData)
+  if (!palette.ok) {
+    return failed('Some of those could not be read as colours, so none of them were saved.', [
+      ...palette.issues,
+    ])
+  }
+
+  const override = paletteOverride(palette.colours, template.document.tokens.color)
+
+  const written = await saveEventTheme(buyer, eventId, override)
+  if (!written.ok) return failed(written.message, [{ path: 'database', message: written.detail }])
+
+  dropCachedCopies(eventId, event.slug)
+  return saved(
+    override.tokens.color === undefined
+      ? "Saved. These are the template's own colours, so this invitation follows the template again."
+      : 'Saved. Guests see these colours now.'
+  )
 }
 
 // The details -----------------------------------------------------------------
@@ -430,6 +611,45 @@ async function askAboutChanges(
   if (replies === 0) return null
 
   return confirming(replies, changes, encodeReplay(submitted))
+}
+
+/**
+ * The stored content document, or the reason it cannot be read.
+ *
+ * An unreadable document is never repaired or replaced on the way past. What is
+ * stored stays stored, exactly as it was written, and the buyer is told why.
+ */
+function readStoredContent(
+  event: EditableEvent
+): { readonly failure: SaveResult } | { readonly content: EventContent } {
+  const stored = eventContentPipeline.load(event.content ?? EMPTY_EVENT_CONTENT)
+  if (!stored.ok) {
+    return {
+      failure: failed(
+        'Your saved content could not be read, so nothing was changed. ' + stored.message,
+        [...stored.issues]
+      ),
+    }
+  }
+
+  return { content: stored.document }
+}
+
+/** What a guest can read in one section right now: the template's, plus the buyer's. */
+function mergedConfigOf(
+  definition: TemplateDefinition,
+  content: EventContent,
+  blockId: string
+): JsonRecord {
+  const block = definition.blocks.find((candidate) => candidate.id === blockId)
+  if (block === undefined) return {}
+
+  const override = Object.hasOwn(content.blocks, blockId) ? content.blocks[blockId] : undefined
+  const merged = applyOverride(block.config, override ?? {})
+
+  return typeof merged === 'object' && merged !== null && !Array.isArray(merged)
+    ? (merged as JsonRecord)
+    : {}
 }
 
 type Opened =

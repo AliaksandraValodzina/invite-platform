@@ -58,7 +58,9 @@ const editableRowSchema = z.object({
   time_zone: z.string(),
   serving_state: z.enum(['unpublished', 'live', 'grace', 'expired']),
   template_id: z.string(),
-  event_content: z.array(z.object({ revision: z.number(), content: z.unknown() })),
+  event_content: z.array(
+    z.object({ revision: z.number(), content: z.unknown(), theme: z.unknown() })
+  ),
   rsvp_questions: z.array(z.unknown()),
 })
 
@@ -93,8 +95,26 @@ export type EditableEvent = {
   readonly state: 'unpublished' | 'live' | 'grace' | 'expired'
   /** templates.definition, unvalidated. The format pipeline is what reads it. */
   readonly definition: unknown
+  /**
+   * templates.theme, unvalidated.
+   *
+   * The palette form needs it for two things it cannot do without: the colours
+   * to show a buyer who has chosen none, and the comparison that decides whether
+   * what they just chose is an override at all. See src/lib/editor/palette.ts.
+   */
+  readonly templateTheme: unknown
   /** event_content.content of the published revision, or null if there is none. */
   readonly content: unknown
+  /**
+   * event_content.theme of the published revision, or null.
+   *
+   * Unvalidated on purpose, exactly like the other three documents. A stored
+   * palette that no longer validates is one the guest page falls back from and
+   * reports (src/lib/template/resolve.ts), and the editor has to be able to show
+   * a buyer that this is what happened rather than quietly pretending they never
+   * chose anything.
+   */
+  readonly themeOverride: unknown
   readonly revision: number
   readonly questions: readonly RsvpQuestion[]
 }
@@ -110,7 +130,7 @@ const EDITABLE_SELECT = [
   'time_zone',
   'serving_state',
   'template_id',
-  'event_content(revision,content)',
+  'event_content(revision,content,theme)',
   'rsvp_questions(id,type,prompt,position,required,options,pii_class)',
 ].join(',')
 
@@ -167,7 +187,9 @@ export async function loadEditableEvent(
     timeZone: row.time_zone,
     state: row.serving_state,
     definition: template.definition,
+    templateTheme: template.theme,
     content: published?.content ?? null,
+    themeOverride: published?.theme ?? null,
     revision: published?.revision ?? 0,
     questions: readQuestions(row.rsvp_questions),
   }
@@ -209,6 +231,11 @@ export type WriteOutcome =
  * requests because unpublishing the old revision and publishing the new one
  * have to land together or not at all. See the migration for the whole
  * argument.
+ *
+ * The theme is not sent, which is what carries the buyer's palette forward.
+ * Composition travels inside the content document, so a reorder is this call
+ * too: one transaction, one whole new revision, and no moment where a guest
+ * could read a page with half a reorder applied to it.
  */
 export async function saveEventContent(
   session: BuyerSession,
@@ -220,6 +247,31 @@ export async function saveEventContent(
   })
 
   return outcome(response, 'Your invitation could not be saved just now.')
+}
+
+/**
+ * Saves the buyer's palette as a new published revision.
+ *
+ * The same function, with the halves the other way round: a theme and no
+ * content, so the words and the composition come forward from the revision
+ * being replaced. A palette that reset somebody's words would be the worst bug
+ * this editor could have, and the reason it cannot happen is that this request
+ * never carries them.
+ *
+ * A new revision rather than an update in place, for the reason the table
+ * exists: "put it back the way it was on Tuesday" is as real a request about a
+ * colour as it is about a sentence.
+ */
+export async function saveEventTheme(
+  session: BuyerSession,
+  eventId: string,
+  theme: unknown
+): Promise<WriteOutcome> {
+  const response = await buyerRequest(session, 'POST', 'rpc/save_event_content', {
+    body: { p_event_id: eventId, p_theme: theme },
+  })
+
+  return outcome(response, 'Your colours could not be saved just now.')
 }
 
 export type EventDetailsPatch = {

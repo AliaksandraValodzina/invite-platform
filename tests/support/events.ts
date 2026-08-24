@@ -86,6 +86,8 @@ export async function seedGuestEvent(
      * edit, then look" is a test racing a bound this repo chose deliberately.
      */
     readonly content?: unknown
+    /** The buyer's stored palette. Defaults to none, as a fresh event carries. */
+    readonly themeOverride?: unknown
   } = {}
 ): Promise<SeededEvent> {
   return seedEvent({
@@ -99,6 +101,7 @@ export async function seedGuestEvent(
     ...(options.publishContent === undefined ? {} : { publishContent: options.publishContent }),
     ...(options.ownerEmail === undefined ? {} : { ownerEmail: options.ownerEmail }),
     ...(options.questions === undefined ? {} : { questions: options.questions }),
+    ...(options.themeOverride === undefined ? {} : { themeOverride: options.themeOverride }),
   })
 }
 
