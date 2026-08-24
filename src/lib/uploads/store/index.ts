@@ -115,6 +115,37 @@ export function assertStoreIsUsable(
 
   if (host.refused !== null) throw new Error(host.refused)
 
+  /*
+   * The same argument one step earlier, for the case the pairing rule above
+   * cannot see. A deployment with no asset hostname AND no R2 falls through to
+   * the filesystem driver, whose root is a relative path inside a serverless
+   * function's read-only bundle. What a buyer gets is EROFS from deep inside
+   * node:fs, which names a path nobody recognises and says nothing about what
+   * to set.
+   *
+   * `VERCEL` rather than NODE_ENV, and that is the whole point: CI builds the
+   * production output and runs the browser suite against it on a normal disk,
+   * where the local store is not a fallback but the store. What makes a disk
+   * unusable is being a function's, not being in production.
+   *
+   * An explicit UPLOADS_LOCAL_ROOT or UPLOADS_DRIVER is taken at its word. If
+   * somebody deliberately points this at /tmp knowing bytes live and die with
+   * one instance, that is a decision, and refusing a decision somebody stated
+   * is not this function's job.
+   */
+  const inServerlessDeployment = (source.VERCEL ?? '').trim() !== ''
+  const chosenDeliberately =
+    (source.UPLOADS_DRIVER ?? '').trim() !== '' || (source.UPLOADS_LOCAL_ROOT ?? '').trim() !== ''
+
+  if (inServerlessDeployment && selection.driver === 'filesystem' && !chosenDeliberately) {
+    throw new Error(
+      'this deployment has no object store: the R2 variables are not set, so uploads would be ' +
+        "written to the function's own disk, which is read only and would not outlive the " +
+        'request in any case. Set R2_ACCOUNT_ID, R2_BUCKET, R2_ACCESS_KEY_ID and ' +
+        'R2_SECRET_ACCESS_KEY in this deployment. See docs/uploads.md.'
+    )
+  }
+
   if (host.configured && selection.driver !== 'r2') {
     throw new Error(
       `NEXT_PUBLIC_ASSET_HOST names an asset hostname, but the selected object store is ` +

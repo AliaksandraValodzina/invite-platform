@@ -16,3 +16,9 @@ CLAUDE.md
 # a dev server has nothing to rewrite, which means Prettier has to keep its
 # hands off it or the two would take turns reformatting it forever.
 tsconfig.json
+
+# Written by `supabase link`, git ignored by supabase/.gitignore, and formatted
+# by whichever version of the CLI happened to write it. Linking is now the
+# normal state for anyone operating a hosted environment, so without this the
+# format check fails on a file nobody wrote and nobody can commit.
+supabase/.temp/

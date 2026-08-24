@@ -155,6 +155,36 @@ describe('an asset hostname must have a real store behind it', () => {
     expect(() => assertStoreIsUsable(selectStore({}), {})).not.toThrow()
   })
 
+  /*
+   * The gap the pairing rule above cannot see: no hostname AND no R2. Nothing
+   * refused that, so it fell through to a filesystem driver rooted inside a
+   * serverless function's read-only bundle, and the buyer's error was EROFS
+   * from node:fs naming a path that means nothing to anybody.
+   */
+  it('refuses a serverless deployment that has no object store at all', () => {
+    const source = { VERCEL: '1' }
+    expect(() => assertStoreIsUsable(selectStore(source), source)).toThrow(
+      /this deployment has no object store/
+    )
+  })
+
+  it('is satisfied by R2 in the same deployment', () => {
+    const source = { ...r2, VERCEL: '1' }
+    expect(() => assertStoreIsUsable(selectStore(source), source)).not.toThrow()
+  })
+
+  it('takes an explicit local root at its word, even in a deployment', () => {
+    // Saying "put them in /tmp" is a decision, not an accident.
+    const source = { VERCEL: '1', UPLOADS_LOCAL_ROOT: '/tmp/uploads' }
+    expect(() => assertStoreIsUsable(selectStore(source), source)).not.toThrow()
+  })
+
+  it('still allows the local store where CI runs the production build', () => {
+    // No VERCEL, so a real disk. This is the browser suite, and it must not break.
+    const source = { NODE_ENV: 'production' }
+    expect(() => assertStoreIsUsable(selectStore(source), source)).not.toThrow()
+  })
+
   it('refuses a vendor hostname before it ever reaches a browser', () => {
     const source = { ...r2, NEXT_PUBLIC_ASSET_HOST: 'https://pub-1.r2.dev' }
     expect(() => assertStoreIsUsable(selectStore(source), source)).toThrow(/storage vendor/)
