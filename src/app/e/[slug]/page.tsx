@@ -92,7 +92,13 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   })
 
   return {
-    title: share.title,
+    /*
+     * Absolute, so the root layout's "%s - Mirthly" template does not reach it.
+     * Everything on this page is the buyer's words, and the tab over somebody's
+     * invitation is theirs too. The product name still reaches a guest, through
+     * the wordmark on the share card and the host in the link they were sent.
+     */
+    title: { absolute: share.title },
     description: share.description,
     openGraph: {
       type: share.openGraph.type,
