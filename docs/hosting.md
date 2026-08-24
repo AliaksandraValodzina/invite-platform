@@ -73,6 +73,42 @@ paid activation path if they are wrong.
 Both are settable from the Management API, so neither has to be a dashboard
 click nobody can review.
 
+### The magic link email template is the third one, and it is the dangerous one
+
+Supabase's default template links to `{{ .ConfirmationURL }}`. That sends the
+buyer through the auth service's own `/verify` endpoint, which verifies the
+token and then hands the session back **in the URL fragment**:
+
+    https://<site>/auth/callback?next=/claim/<code>#access_token=...
+
+A fragment is never sent to a server. `src/app/auth/callback/route.ts` reads
+`token_hash` from the query string, finds nothing, and answers
+`/login?problem=link`. The buyer is told their link did not work, one tap after
+paying, and the claim they paid for is dropped. Everything upstream of this
+looks perfect while it happens.
+
+`supabase/templates/magic-link.html` is the template that works: it links at
+the app directly and appends the one-use token to `{{ .RedirectTo }}`, which is
+already carrying the `?next=` for the claim in progress. `supabase/config.toml`
+points the local stack at it. **A hosted project needs the same content in its
+own auth settings**, and no migration carries it there.
+
+`src/lib/auth/destination.ts` always emits a query string on the callback URL
+for this reason, because a Go template cannot ask whether the URL it was handed
+already has one. That coupling is asserted in
+`tests/unit/auth/destination.test.ts` rather than left as a comment.
+
+**On a free tier project using the built-in email sender, this template cannot
+be changed** — the Management API refuses with "Email template modification is
+not available for free tier projects using the default email provider". So a
+free tier project with the built-in sender cannot complete a sign-in against
+this app at all. That is not the constraint it first looks like: the built-in
+sender is rate limited to two emails an hour and Supabase documents it as being
+for development, so it was never going to deliver to real buyers. Configuring
+the custom SMTP provider `AGENTS.md` already calls for (Resend or Postmark,
+never raw SMTP) is what unlocks both the template and delivery, and it is the
+same step either way.
+
 ## Migrations reach a hosted project the same way they reach a local one
 
 `supabase link --project-ref <ref>` then `supabase db push`. Check first with
@@ -128,8 +164,12 @@ Against the deployment, not against localhost:
 - Read `og:url` and `og:image` off the live page and fetch the image. The share
   card is how an invitation spreads, and it is built from
   `NEXT_PUBLIC_SITE_URL`, so a wrong origin shows up here first.
-- Follow a claim link the whole way, including the trip through a mailbox.
-  Verifying that the page loads verifies nothing about the redirect allow-list.
+- Follow a claim link the whole way. `tests/support/auth.ts` shows how to mint
+  the `token_hash` link a correct email template would send, which exercises the
+  real callback and the real allow list while skipping only the delivery. Do
+  both: the minted link proves the app, and a link out of a real mailbox proves
+  the template. They fail independently, and the template failing is the one
+  that costs a sale.
 
 `tests/e2e/caching.spec.ts` refuses to run against a dev server on purpose: a
 cache header is a property of a deployment, so it is re-checked by hand on every

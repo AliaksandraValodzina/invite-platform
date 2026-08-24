@@ -261,6 +261,21 @@ otp_expiry = 3600
 # admin_email = "admin@email.com"
 # sender_name = "Admin"
 
+# The magic link template, and it is not decoration.
+#
+# Supabase's default template links to {{ .ConfirmationURL }}, which routes the
+# buyer through the auth service's /verify endpoint and returns the session in
+# the URL FRAGMENT. A fragment never reaches a server, so the callback route
+# finds no token and the buyer is told their link did not work, one tap after
+# paying. This template links straight at the app instead, with the one-use
+# token in the query string where the route reads it.
+#
+# A hosted deployment needs the SAME template in its own auth settings. It is
+# not schema, so no migration carries it. See docs/hosting.md.
+[auth.email.template.magic_link]
+subject = "Your sign-in link"
+content_path = "./supabase/templates/magic-link.html"
+
 # Uncomment to customize email template
 # [auth.email.template.invite]
 # subject = "You have been invited"

@@ -79,7 +79,26 @@ export function safeDestination(value: string | null | undefined): string | null
 export function callbackUrl(siteUrl: string, destination: string | null): string {
   const base = `${siteUrl.replace(/\/$/, '')}/auth/callback`
   const safe = safeDestination(destination)
-  return safe === null ? base : `${base}?${NEXT_PARAM}=${encodeURIComponent(safe)}`
+
+  /*
+   * The query string is always present, even when there is no destination, and
+   * that is load bearing rather than tidy.
+   *
+   * This URL is handed to the auth API as `redirect_to`, and the email template
+   * builds the link the buyer actually clicks by appending the one-use token to
+   * it: `{{ .RedirectTo }}&token_hash={{ .TokenHash }}`. A template cannot ask
+   * whether the URL it was given already has a query string, so if this
+   * sometimes returned a bare path the link would come out as
+   * `/auth/callback&token_hash=...` and the callback would find no token. What
+   * the buyer sees then is the sign-in page telling them their link did not
+   * work, one tap after paying.
+   *
+   * An empty `next` is not a destination: `safeDestination` rejects the empty
+   * string, so `resolveDestination` falls through to the claim cookie exactly
+   * as it does when the parameter is absent. See docs/hosting.md for the
+   * template this pairs with.
+   */
+  return `${base}?${NEXT_PARAM}=${safe === null ? '' : encodeURIComponent(safe)}`
 }
 
 /**
