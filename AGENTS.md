@@ -14,6 +14,8 @@ Stack: **Next.js App Router + TypeScript (strict) + Tailwind + Supabase (Postgre
 
 **Everything runs locally with no cloud credential.** `supabase start`, `.env.example` copied to `.env.local`, `node scripts/seed-event.ts`. Do not put a hosted project name or a database region anywhere in the repo: the region is chosen once and is effectively irreversible, and it is the captain's call.
 
+**The product is Mirthly, at `mirthly.app`** (`data/decision-product-name.md`). The repository, the Vercel project and the Supabase project are all still *named* `invite-platform`; renaming them is a separate action nobody has asked for. **How it is deployed is in `docs/hosting.md`** and the deployment shape is pinned in `vercel.json` rather than in a dashboard, for the same reason schema lives in migrations. Three things there are worth knowing before touching a hosted environment: the hosted database can be behind `main` and nothing says so out loud, the Supabase project's own Site URL and redirect allow-list are not schema and will silently break a paid activation if wrong, and a deployment with no R2 variables has no object store at all.
+
 ## Phase 0 is what we are building — and only that
 
 Exit criteria, in the captain's words: *seed a template JSON by hand, create an event row, visit its slug on a phone, see a fast beautiful page with a live countdown, submit an RSVP, and see it in the database — with tests covering that loop.*
