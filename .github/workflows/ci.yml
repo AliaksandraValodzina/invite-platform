@@ -475,6 +475,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          # `vercel pull` brings down the PREVIOUS deployment's git metadata,
+          # so the file already holds a VERCEL_GIT_COMMIT_SHA that is not this
+          # commit. Nothing reads it at build time and the stamp below wins at
+          # runtime regardless, but a stale sha sitting in the build
+          # environment is a trap for whoever reads this next. Drop it.
+          grep -v '^VERCEL_GIT_COMMIT_SHA=' .vercel/.env.production.local > .vercel/.env.without-stale-sha || true
+          if [ ! -s .vercel/.env.without-stale-sha ]; then
+            echo "::error::The pulled production environment is empty. Refusing to build against nothing."
+            exit 1
+          fi
+          mv .vercel/.env.without-stale-sha .vercel/.env.production.local
+
           # `vercel build` reads this file. The variable is NEXT_PUBLIC_ for a
           # mechanical reason and not a privacy one: Vercel does not carry a
           # build time variable into a function's runtime environment, and

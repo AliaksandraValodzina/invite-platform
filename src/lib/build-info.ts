@@ -26,6 +26,12 @@
  *     or a dashboard redeploy built it. It answers for deployments this repo's
  *     CI did not make.
  *
+ * The stamp wins when both are set, and that order is load bearing rather than
+ * arbitrary. `vercel pull` brings down the previous deployment's git metadata,
+ * so a build made by CI has a `VERCEL_GIT_COMMIT_SHA` in scope that belongs to
+ * some earlier commit. Answering with it would be the worst possible failure
+ * here: a confident, wrong, plausible sha.
+ *
  * `source` says which one answered, so a deployment nobody expected can be told
  * from one CI published.
  */
