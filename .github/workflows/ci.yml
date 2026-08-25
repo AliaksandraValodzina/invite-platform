@@ -54,6 +54,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       e2e: ${{ steps.filter.outputs.e2e }}
+      publisher: ${{ steps.filter.outputs.publisher }}
       duration: ${{ steps.duration.outputs.seconds }}
     steps:
       - name: Record start time
@@ -88,6 +89,13 @@ jobs:
       - name: Test the deployed-commit check
         run: node --test .github/scripts/deployed-commit.test.mjs
 
+      # And for the check that decides what the publish credential is wrong
+      # about. Same reasoning again: it costs nothing measurable, and a
+      # diagnostic that names the wrong cause is worse than the generic
+      # sentence it replaced, so its mapping from answer to cause is asserted.
+      - name: Test the Vercel scope check
+        run: node --test .github/scripts/vercel-scope.test.mjs
+
       - name: Decide whether Playwright can exercise this diff
         id: filter
         env:
@@ -99,6 +107,10 @@ jobs:
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             echo "Not a pull request, so the full suite runs."
             echo "e2e=true" >> "$GITHUB_OUTPUT"
+            # A push to main runs the real `deploy` job, which asks the
+            # credential question itself. Rehearsing it here as well would ask
+            # Vercel the same three questions twice in one run.
+            echo "publisher=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -118,6 +130,7 @@ jobs:
           if [ -z "$changed" ]; then
             echo "Empty diff, running Playwright rather than trusting the filter."
             echo "e2e=true" >> "$GITHUB_OUTPUT"
+            echo "publisher=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -130,6 +143,19 @@ jobs:
           else
             echo "e2e=false" >> "$GITHUB_OUTPUT"
             echo "Playwright skipped: no file it can exercise changed."
+          fi
+
+          # The publisher cannot be exercised by a pull request: `deploy` only
+          # runs on a push to main, so a change to it is merged untried. The
+          # part of it that can be tried without publishing anything is the
+          # credential, so a pull request that touches the publisher asks the
+          # credential question for real. It is what would have caught the
+          # broken token on 2026-08-25 before a merge rather than after two.
+          if echo "$changed" | grep -Eq '^(\.github/workflows/ci\.yml$|\.github/scripts/vercel-scope)'; then
+            echo "publisher=true" >> "$GITHUB_OUTPUT"
+            echo "The publisher changed, so its credential is checked for real."
+          else
+            echo "publisher=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Report job duration
@@ -404,6 +430,65 @@ jobs:
             echo "GitHub rounds each job up to a whole minute, so short jobs are not cheap ones. Skipped jobs are not billed."
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # The one part of the publisher a pull request can exercise.
+  #
+  # `deploy` runs only on a push to main, so every change to it is merged
+  # untried, and on 2026-08-25 that meant the publish credential was found to be
+  # wrong twice, after the merge both times, by a job whose message named no
+  # cause. Publishing cannot be rehearsed on a branch: it would move the
+  # production alias. Asking Vercel whether the credential resolves the project
+  # can be, because it only reads.
+  #
+  # Deliberately not in the gate's `needs`. It answers a question about the
+  # repository's secrets rather than about the diff, so a broken credential must
+  # not be able to block an unrelated merge, and a merge it did block would be
+  # blocked for something the author usually cannot fix. It still turns the run
+  # red, which is the loudness that was missing.
+  #
+  # Only on pull requests from this repository: a fork gets no secrets, so
+  # there the job would be reporting the absence of a token it was never going
+  # to be given.
+  publish-credential:
+    name: publish credential
+    needs: static
+    if: >-
+      ${{ needs.static.outputs.publisher == 'true'
+          && github.event_name == 'pull_request'
+          && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+      VERCEL_CLI_VERSION: '59.5.0'
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # Same refusal as `deploy`, for the same reason: a credential check that
+      # skips itself when a credential is missing checks nothing.
+      - name: Refuse to run half configured
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=()
+          [ -n "${VERCEL_TOKEN:-}" ] || missing+=("VERCEL_TOKEN (repository secret)")
+          [ -n "${VERCEL_ORG_ID:-}" ] || missing+=("VERCEL_ORG_ID (repository variable)")
+          [ -n "${VERCEL_PROJECT_ID:-}" ] || missing+=("VERCEL_PROJECT_ID (repository variable)")
+          if [ ${#missing[@]} -ne 0 ]; then
+            echo "::error::Nothing was checked. Missing: ${missing[*]}"
+            exit 1
+          fi
+
+      - name: Install the Vercel CLI
+        run: npm install --global "vercel@${VERCEL_CLI_VERSION}"
+
+      - name: Ask Vercel what this token is and what it can see
+        run: node .github/scripts/vercel-scope.mjs
+
   # Publishing, and the reason it is here rather than left to Vercel.
   #
   # On 2026-08-24 the merge of #17 produced no Vercel deployment at all. GitHub
@@ -464,6 +549,19 @@ jobs:
 
       - name: Install the Vercel CLI
         run: npm install --global "vercel@${VERCEL_CLI_VERSION}"
+
+      # Before the publish, not after it, and before the first command that
+      # can fail with a sentence that means four things.
+      #
+      # `vercel pull` reports every permission problem as "Could not retrieve
+      # Project Settings. To link your Project, remove the `.vercel` directory
+      # and deploy again", which in CI is advice about a directory that does not
+      # exist, wrapped around a 403 it does not mention. This asks Vercel the
+      # three questions separately, so whichever one is the real answer is the
+      # one printed. It reads nothing it does not already have and publishes
+      # nothing, and it never prints the token.
+      - name: Ask Vercel what this token is and what it can see
+        run: node .github/scripts/vercel-scope.mjs
 
       # Brings down the project's production environment variables, which the
       # build needs: NEXT_PUBLIC_SITE_URL is inlined at build time and every

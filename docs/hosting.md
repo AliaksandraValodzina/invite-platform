@@ -294,6 +294,68 @@ is not a secret. `VERCEL_GIT_COMMIT_SHA` is the fallback, so a deployment made
 from the dashboard still answers, and `source` says which one did.
 `src/lib/build-info.ts` has the rest.
 
+### When the credential is wrong, the job says which way
+
+`vercel pull` is the job's first real command and it has one failure message for
+three different problems:
+
+```
+Error: Could not retrieve Project Settings.
+To link your Project, remove the `.vercel` directory and deploy again.
+```
+
+In CI that advice cannot apply: `.vercel` is gitignored, so there is no
+directory to remove. Reading the pinned CLI's own source says where the sentence
+comes from. It resolves the project link from `VERCEL_ORG_ID` and
+`VERCEL_PROJECT_ID`, looks the owner and the project up, and prints exactly that
+when either lookup answers `403` with code `forbidden` or `team_unauthorized`. A
+`404` prints something else and an unusable token throws something else again.
+So it is a permission answer dressed as a linking answer, and it never says
+which permission.
+
+`.github/scripts/vercel-scope.mjs` runs before the pull and asks the three
+questions separately, each only when the one before it said yes:
+
+| Question                                      | Asked with                                    | If no                                                                      |
+| --------------------------------------------- | --------------------------------------------- | -------------------------------------------------------------------------- |
+| Is this token a credential the CLI can use?   | `vercel whoami`                               | `token-not-accepted`: refused outright, or accepted with no user behind it |
+| Can it resolve `VERCEL_ORG_ID` as a scope?    | `vercel project list --scope <org> --limit 1` | `scope-not-reachable`: the token belongs to a different scope              |
+| Does `VERCEL_PROJECT_ID` exist in that scope? | `vercel project inspect <project> --scope`    | `project-not-in-scope`: wrong id, deleted, or transferred                  |
+
+All three yes is reported as "not the cause" rather than as "fine", and the pull
+runs and speaks for itself.
+
+The token never reaches a command line. It is handed to the CLI through the
+child process environment, which the CLI reads as `VERCEL_TOKEN`, and every
+captured line is passed through a redactor on the way to the log in case the CLI
+ever echoes it back. What is reported about the token itself is its length and
+whether it has surrounding whitespace, because a secret pasted with a trailing
+newline is a real failure and otherwise an invisible one. Neither is a fragment
+of the value.
+
+### What this found, on 2026-08-25
+
+`token-not-accepted`. `vercel whoami` did not get a refusal; it got an answer,
+and the answer was `Error: User not found.` Vercel accepted the request made
+with the value in `VERCEL_TOKEN` and said there is no user behind it. That is
+why the pull's owner and project lookups came back `403` and why the generic
+sentence appeared: it was reporting the last consequence of a credential that
+does not identify anybody, in the vocabulary of the first thing it happened to
+try.
+
+So the fix is the captain's and it is one thing: create a personal access token
+at <https://vercel.com/account/settings/tokens>, under the scope that owns the
+project, and replace the `VERCEL_TOKEN` repository secret with it. The value in
+the secret now is 60 characters with no surrounding whitespace, which is not the
+shape of one.
+
+`publish-credential` runs the same script on a pull request that changes the
+publisher, because `deploy` runs only on a push to `main` and so every change to
+it is otherwise merged untried. It only reads and it publishes nothing. It is
+deliberately outside the gate's `needs`: it answers a question about the
+repository's secrets rather than about the diff, and a wrong secret must not
+block a merge that has nothing to do with it.
+
 ### And a check that does not depend on anybody merging
 
 `.github/workflows/is-production-current.yml` asks the same question once a day
