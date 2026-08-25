@@ -96,6 +96,14 @@ jobs:
       - name: Test the Vercel scope check
         run: node --test .github/scripts/vercel-scope.test.mjs
 
+      # And for the step that decides which address counts as "the live site".
+      # It is asserted against the answer Vercel really gave for this project,
+      # because the shapes in that answer are the whole difficulty: one of the
+      # three records is a 308 to another one, and checking it would prove that
+      # a redirect works.
+      - name: Test the production address check
+        run: node --test .github/scripts/production-address.test.mjs
+
       - name: Decide whether Playwright can exercise this diff
         id: filter
         env:
@@ -107,10 +115,15 @@ jobs:
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             echo "Not a pull request, so the full suite runs."
             echo "e2e=true" >> "$GITHUB_OUTPUT"
-            # A push to main runs the real `deploy` job, which asks the
-            # credential question itself. Rehearsing it here as well would ask
-            # Vercel the same three questions twice in one run.
-            echo "publisher=false" >> "$GITHUB_OUTPUT"
+            # A push to main is the one place a bad credential stops the site,
+            # so that is the last place the check that names one should be
+            # silent. It used to be false here, on the grounds that `deploy`
+            # asks the same three questions itself. It does, but only after the
+            # gate has finished and only inside the publishing job, so on main
+            # the run reported `publish credential: skipped` and the answer was
+            # buried in another job's log. Three read-only API calls is a cheap
+            # price for a named job that says so on its own.
+            echo "publisher=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -151,7 +164,7 @@ jobs:
           # credential, so a pull request that touches the publisher asks the
           # credential question for real. It is what would have caught the
           # broken token on 2026-08-25 before a merge rather than after two.
-          if echo "$changed" | grep -Eq '^(\.github/workflows/ci\.yml$|\.github/scripts/vercel-scope)'; then
+          if echo "$changed" | grep -Eq '^(\.github/workflows/ci\.yml$|\.github/scripts/(vercel-scope|production-address|deployed-commit))'; then
             echo "publisher=true" >> "$GITHUB_OUTPUT"
             echo "The publisher changed, so its credential is checked for real."
           else
@@ -430,7 +443,8 @@ jobs:
             echo "GitHub rounds each job up to a whole minute, so short jobs are not cheap ones. Skipped jobs are not billed."
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # The one part of the publisher a pull request can exercise.
+  # The one part of the publisher a pull request can exercise, and the one that
+  # names a bad credential on main.
   #
   # `deploy` runs only on a push to main, so every change to it is merged
   # untried, and on 2026-08-25 that meant the publish credential was found to be
@@ -439,22 +453,31 @@ jobs:
   # production alias. Asking Vercel whether the credential resolves the project
   # can be, because it only reads.
   #
+  # It runs on a push to main too, which it did not at first. The argument for
+  # skipping it there was that `deploy` asks the same three questions itself.
+  # It does, but only after the gate has finished and only inside the job that
+  # publishes, so a run on main showed `publish credential: skipped` and the
+  # answer, when it mattered, was buried in another job's log. The check that
+  # names a bad token should not be silent in the one place a bad token stops
+  # the site. `deploy` keeps its own copy of the step: it is the last thing
+  # before something publishes, and a check that can be separated from the
+  # thing it protects by an edit to the job graph is not a check.
+  #
   # Deliberately not in the gate's `needs`. It answers a question about the
   # repository's secrets rather than about the diff, so a broken credential must
   # not be able to block an unrelated merge, and a merge it did block would be
   # blocked for something the author usually cannot fix. It still turns the run
   # red, which is the loudness that was missing.
   #
-  # Only on pull requests from this repository: a fork gets no secrets, so
-  # there the job would be reporting the absence of a token it was never going
-  # to be given.
+  # Never on a pull request from a fork: a fork gets no secrets, so there the job
+  # would be reporting the absence of a token it was never going to be given.
   publish-credential:
     name: publish credential
     needs: static
     if: >-
       ${{ needs.static.outputs.publisher == 'true'
-          && github.event_name == 'pull_request'
-          && github.event.pull_request.head.repo.full_name == github.repository }}
+          && (github.event_name != 'pull_request'
+              || github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: ubuntu-latest
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
@@ -611,39 +634,54 @@ jobs:
           echo "url=$url" >> "$GITHUB_OUTPUT"
           echo "Deployment: $url"
 
-      - name: Read the address the project itself declares
-        id: origin
-        shell: bash
-        run: |
-          set -euo pipefail
-          # NEXT_PUBLIC_SITE_URL out of the production environment just pulled,
-          # rather than a host written into this file. The app builds its own
-          # links from that value, so checking any other address would be
-          # checking a different site than the one just shipped, and it is the
-          # reason no host name appears anywhere in this repository.
-          line=$(grep -m 1 '^NEXT_PUBLIC_SITE_URL=' .vercel/.env.production.local || true)
-          origin=${line#NEXT_PUBLIC_SITE_URL=}
-          origin=${origin%\"}
-          origin=${origin#\"}
-          if [ -z "$origin" ]; then
-            echo "::error::NEXT_PUBLIC_SITE_URL is not set in the production environment, so there is no address to check."
-            exit 1
-          fi
-          echo "origin=$origin" >> "$GITHUB_OUTPUT"
+      # This used to grep NEXT_PUBLIC_SITE_URL out of the environment `vercel
+      # pull` had just written, on the grounds that the app builds its own links
+      # from that value. It cannot: every environment variable on this project
+      # is stored `sensitive`, which is write-only, so Vercel returns the name
+      # and never the value and the pulled file reads
+      # NEXT_PUBLIC_SITE_URL="[SENSITIVE]". That is Vercel's own placeholder and
+      # not a redaction. The old step only asked whether the value was empty, a
+      # placeholder is not empty, and the step below then died inside `new URL`
+      # with the check unrun. See production-address.mjs for the whole account.
+      #
+      # Sensitive is the right setting for SUPABASE_SERVICE_ROLE_KEY sitting
+      # beside it, and finding out where a public website lives should not need
+      # a secret read back anyway. So Vercel is asked which domains it is
+      # serving this project at, which is the thing that actually decides where
+      # a guest lands. It still names no host in this repository.
+      - name: Read the addresses Vercel says this project is served at
+        id: address
+        run: node .github/scripts/production-address.mjs
 
       # The whole job is for this step. Everything above it is a claim; this
       # reads the public address over plain HTTP, the way a guest does, and
       # fails when it is serving anything other than the commit that was merged.
+      #
+      # The empty check is here as well as in the step above, because this is
+      # the one that must never quietly do nothing. An address the run could not
+      # determine is not an absence of work: it is the run failing to know
+      # whether the site is live, which is the exact state that stayed green for
+      # a day on 2026-08-24.
       - name: Prove the live address is serving this commit
-        run: node .github/scripts/deployed-commit.mjs "$ORIGIN" "$GITHUB_SHA"
+        shell: bash
         env:
-          ORIGIN: ${{ steps.origin.outputs.origin }}
+          ORIGINS: ${{ steps.address.outputs.origins }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ORIGINS// /}" ]; then
+            echo "::error::No live address reached this step, so nothing was checked and the publish is unproved."
+            echo 'The step above is meant to fail before this one. Reaching here means it did not, which is a bug in .github/workflows/ci.yml.'
+            exit 1
+          fi
+          for origin in $ORIGINS; do
+            node .github/scripts/deployed-commit.mjs "$origin" "$GITHUB_SHA"
+          done
 
       - name: Say what was published
         if: ${{ always() }}
         shell: bash
         env:
-          ORIGIN: ${{ steps.origin.outputs.origin }}
+          ORIGINS: ${{ steps.address.outputs.origins }}
           URL: ${{ steps.publish.outputs.url }}
           RESULT: ${{ job.status }}
         run: |
@@ -654,7 +692,7 @@ jobs:
             echo "| --- | --- |"
             echo "| Commit | \`${GITHUB_SHA}\` |"
             echo "| Deployment | ${URL:-none} |"
-            echo "| Live address | ${ORIGIN:-unknown} |"
+            echo "| Live address | ${ORIGINS:-none could be determined} |"
             echo "| Result | ${RESULT} |"
           } >> "$GITHUB_STEP_SUMMARY"
 

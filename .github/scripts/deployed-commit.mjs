@@ -32,6 +32,54 @@ export const DEFAULT_WAIT_MS = 6000
 const FULL_SHA = /^[0-9a-f]{40}$/
 
 /**
+ * Turns whatever the workflow handed us into an origin, or into a sentence
+ * saying why it is not one.
+ *
+ * This exists because of 2026-08-25. The address used to be read out of
+ * `.vercel/.env.production.local` after `vercel pull`, and Vercel will not hand
+ * back the value of an environment variable the project marks sensitive: it
+ * writes the literal text `[SENSITIVE]` in its place. NEXT_PUBLIC_SITE_URL is
+ * one of those, so the step downstream received a non-empty string that is not
+ * an address, the emptiness check it had passed, and `new URL` threw out of the
+ * middle of the poll. A stack trace is not a verdict: it names neither the
+ * cause nor the fact that the only check on whether publishing worked did not
+ * run. Every shape that is not an address gets a named refusal here instead.
+ */
+export function readOrigin(value) {
+  if (typeof value !== 'string' || value.trim() === '') {
+    return { ok: false, message: 'no address was given, so nothing could be checked.' }
+  }
+
+  const trimmed = value.trim()
+  let parsed
+  try {
+    parsed = new URL(trimmed)
+  } catch {
+    return { ok: false, message: refusal(trimmed) }
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return { ok: false, message: refusal(trimmed) }
+  }
+  if (parsed.hostname === '') {
+    return { ok: false, message: refusal(trimmed) }
+  }
+
+  return { ok: true, origin: parsed.origin }
+}
+
+function refusal(value) {
+  return (
+    `${JSON.stringify(value)} is not an absolute http(s) address, so nothing could be checked. ` +
+    'A publish that cannot say where the site is has not been proved to have worked. ' +
+    '`[SENSITIVE]` here means the address was read from a Vercel environment variable the ' +
+    'project marks sensitive, whose value Vercel never returns. ' +
+    ".github/scripts/production-address.mjs asks Vercel for the project's own production " +
+    'domains instead.'
+  )
+}
+
+/**
  * Reads one response into a verdict about that response alone.
  *
  * Every branch that is not "this is the expected commit" returns ok: false,
@@ -81,7 +129,10 @@ export function readAnswer(expected, { status, body }) {
 
 /** Fetches once and never throws: a connection error is just another answer that is not the expected commit. */
 export async function askOnce(origin, expected, fetchImpl) {
-  const url = new URL('/api/version', origin).toString()
+  const read = readOrigin(origin)
+  if (!read.ok) return { ok: false, retry: false, message: read.message }
+
+  const url = new URL('/api/version', read.origin).toString()
   try {
     const response = await fetchImpl(url, {
       headers: { accept: 'application/json' },
@@ -157,6 +208,19 @@ export async function main(
 
   if (!FULL_SHA.test(expected)) {
     error(`expected a full 40 character commit sha, got ${JSON.stringify(expected)}`)
+    return 2
+  }
+
+  // Before the poll, not inside it. An address that is not an address is a
+  // failure of this job to know what it is checking, and it is reported as
+  // that rather than as ten failed attempts to reach something.
+  const read = readOrigin(origin)
+  if (!read.ok) {
+    error('')
+    error('::error::The live address could not be read, so the publish was not proved.')
+    error(`  ${read.message}`)
+    error('')
+    error('docs/hosting.md, "Publishing is done by CI", says where the address comes from.')
     return 2
   }
 

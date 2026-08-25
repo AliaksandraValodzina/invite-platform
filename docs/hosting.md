@@ -54,6 +54,38 @@ the anon key never needs to reach a browser either.
 `NEXT_PUBLIC_DATA_REGION` wants a country or a plain-English place, not a
 provider region code. It is printed to guests inside an English sentence.
 
+### Every one of them is stored `sensitive`, and nothing may read one back
+
+On this project each variable above is created with Vercel's `sensitive` type,
+which is write-only: the API returns the name and never the value. `vercel pull`
+and `vercel env pull` both write the literal placeholder in its place:
+
+```
+NEXT_PUBLIC_SITE_URL="[SENSITIVE]"
+```
+
+That is Vercel's own text, not a redaction, and it is not a bug to fix by making
+the variables readable. `SUPABASE_SERVICE_ROLE_KEY` is in that list and being
+write-only is exactly what it should be.
+
+Two consequences worth carrying:
+
+- **Nothing in CI may treat the pulled file as a source of values.** It cost a
+  day: the publish job read `NEXT_PUBLIC_SITE_URL` out of it to decide which
+  address to check, the placeholder is not empty so the emptiness guard passed,
+  and the check that proves the site is live died inside `new URL`. The address
+  now comes from Vercel's answer about the project's own production domains.
+  See `.github/scripts/production-address.mjs`.
+- **A value that must reach a browser must not be read as a literal
+  `process.env.NEXT_PUBLIC_X`.** That form is inlined at build time, and in CI
+  the build reads the pulled file, so it would inline the placeholder.
+  `readSiteConfig`, `readDataRegion` and `readServiceConfig` all read from a
+  record passed in (`source.NEXT_PUBLIC_SITE_URL`), which Next does not inline,
+  so they read the real value out of the function's runtime environment.
+  `src/lib/build-info.ts` is the deliberate exception and says so: the commit is
+  stamped into the pulled file by the job itself, so its literal read is reading
+  something CI wrote rather than something Vercel withheld.
+
 ## The Supabase project's own settings
 
 Two of them are not schema, are not in a migration, and will silently ruin the
@@ -279,10 +311,29 @@ wire a guest uses, and stays red until the address serves the commit that was
 merged. A publish is not finished when the CLI prints a URL. It is finished when
 the address a buyer typed has the work.
 
-`<origin>` is `NEXT_PUBLIC_SITE_URL`, read out of the production environment the
-job just pulled, because that is the value the app builds its own links from.
-No host name is written into the workflow, for the same reason none is written
-anywhere else in this repository.
+`<origin>` comes from Vercel: `.github/scripts/production-address.mjs` asks
+`GET /v9/projects/<id>/domains?production=true` and picks the addresses a guest
+can actually be handed. No host name is written into the workflow, for the same
+reason none is written anywhere else in this repository.
+
+It used to be `NEXT_PUBLIC_SITE_URL` out of the pulled environment. That cannot
+work, because Vercel never returns a sensitive variable's value; see "Every one
+of them is stored `sensitive`" above.
+
+Picking one takes rules, because Vercel returns several records with different
+shapes. For this project, three: `www.mirthly.app` with a 308 `redirect` to the
+apex, `mirthly.app` with no redirect, and the `*.vercel.app` name Vercel hands
+out. A redirect record is a signpost and checking it would prove that a 308
+works; a record carrying a `gitBranch` or a `customEnvironmentId` is another
+environment wearing a production flag; an unverified one is not being served. Of
+what is left, a domain of the project's own wins over the `*.vercel.app`
+fallback, and every address in that tier is checked, because a project with two
+live domains has two addresses that must both serve the merged commit.
+
+**No address means red, never quiet.** If Vercel lists nothing usable, the step
+fails and says which records it saw and why each was rejected. The step after it
+refuses an empty list a second time. "Nothing to check" is the shape that let a
+dead publish stay green for a day, and it is not allowed to occur.
 
 `/api/version` reports the commit and nothing else. It is separate from
 `/api/health`, whose contract is process liveness for Playwright's webServer and
@@ -417,7 +468,9 @@ Against the deployment, not against localhost:
   the thing least likely to be noticed.
 - Read `og:url` and `og:image` off the live page and fetch the image. The share
   card is how an invitation spreads, and it is built from
-  `NEXT_PUBLIC_SITE_URL`, so a wrong origin shows up here first.
+  `NEXT_PUBLIC_SITE_URL`, so a wrong origin shows up here first. CI cannot do
+  this one for you: it never learns that variable's value, only where Vercel is
+  serving the project. If the two ever disagree, this is where it shows.
 - Follow a claim link the whole way. `tests/support/auth.ts` shows how to mint
   the `token_hash` link a correct email template would send, which exercises the
   real callback and the real allow list while skipping only the delivery. Do
