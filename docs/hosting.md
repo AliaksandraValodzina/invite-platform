@@ -213,10 +213,140 @@ that is not an upload works: buyer photos, the music file and envelope artwork
 are the only surfaces affected, and they are one capability with three uses,
 which is why turning them off is one decision rather than three.
 
+## Publishing is done by CI, and why
+
+**A merge to `main` is published by the `deploy` job in
+`.github/workflows/ci.yml`, after the gate. Vercel's own deployments from
+`main` are off, in `vercel.json`.** Previews are still Vercel's.
+
+### What happened
+
+On 2026-08-24 the merge of #17 produced no Vercel deployment at all. Not a
+failed one, not a cancelled one: none. The site went on serving the previous
+commit for a day, and what noticed was a person reading the page.
+
+The evidence, all of it public and all of it re-checkable:
+
+| Fact                                                                                   | Where                                        |
+| -------------------------------------------------------------------------------------- | -------------------------------------------- |
+| GitHub Actions ran on the merge commit at `10:21:00Z`                                  | `actions/runs`, event `push`, head `6ea846d` |
+| GitHub opened a check suite for the **vercel** app at `10:20:59Z`                      | `commits/6ea846d/check-suites`               |
+| That check suite is still `queued`, `conclusion: null`                                 | same                                         |
+| The commit has **no** `Vercel` status. Every earlier push to `main` has one, `success` | `commits/<sha>/status`, six commits compared |
+| Vercel has no deployment for that commit                                               | `v6/deployments?projectId=...`               |
+
+So the push reached GitHub, GitHub dispatched it to the Vercel GitHub App, and
+nothing came back. The failure is on the far side of a delivery this account
+cannot inspect: a third-party GitHub App's delivery log is visible only to the
+app's owner.
+
+Everything that could have suppressed it deliberately was checked and is
+correct: the app still has access to this repository
+(`v1/integrations/search-repo` lists it), the project's `productionBranch` is
+`main`, `gitProviderOptions.createDeployments` is `enabled`, the team is
+`blocked: null`, `softBlock: null`, `featureBlocks: {}` with billing `active`,
+there is no branch protection and no `[skip ci]` token in the commit message.
+
+One correction to the story as it was first told: **#14, #15 and #16 did reach
+production.** Each has a `Vercel` status of `success` and a matching production
+deployment. What made the site look four changes behind is that the scaffolding
+heading and the `Invite Platform` tab title were still there at `79df4d5`, and
+#17 is what deleted them. One merge was lost, not four. It looked like four.
+
+### Why the answer is not "reconnect it"
+
+There was nothing to reconnect. A cause that leaves no record, has no retry and
+no alarm cannot be declared fixed, and the next occurrence would look exactly
+like this one: green everywhere, stale in public. The Hobby plan is worth
+naming for a different reason. It is non-commercial and the product is heading
+for a paid Etsy listing, so the account will change; but nothing in this
+incident points at a plan limit, and no plan change was made.
+
+So publishing moved to the place where a failure is visible: a job on `main`,
+in a repository that is public, so Actions minutes are free.
+
+### What the job does, and the one step that matters
+
+`vercel pull`, `vercel build --prod`, `vercel deploy --prebuilt --prod`, and
+then the step the whole job exists for:
+
+```
+node .github/scripts/deployed-commit.mjs "<origin>" "$GITHUB_SHA"
+```
+
+It reads `<origin>/api/version` over plain HTTP with no credential, the same
+wire a guest uses, and stays red until the address serves the commit that was
+merged. A publish is not finished when the CLI prints a URL. It is finished when
+the address a buyer typed has the work.
+
+`<origin>` is `NEXT_PUBLIC_SITE_URL`, read out of the production environment the
+job just pulled, because that is the value the app builds its own links from.
+No host name is written into the workflow, for the same reason none is written
+anywhere else in this repository.
+
+`/api/version` reports the commit and nothing else. It is separate from
+`/api/health`, whose contract is process liveness for Playwright's webServer and
+must stay that. The commit reaches it as `NEXT_PUBLIC_BUILD_COMMIT`, stamped by
+the job into `.vercel/.env.production.local` before the build, because Vercel
+does not carry a build-time variable into a function's runtime environment and
+`NEXT_PUBLIC_` is the prefix Next inlines. A commit hash of a public repository
+is not a secret. `VERCEL_GIT_COMMIT_SHA` is the fallback, so a deployment made
+from the dashboard still answers, and `source` says which one did.
+`src/lib/build-info.ts` has the rest.
+
+### And a check that does not depend on anybody merging
+
+`.github/workflows/is-production-current.yml` asks the same question once a day
+and opens an issue when the answer is no. The deploy job covers the way this
+went wrong; the daily run covers the ways it has not gone wrong yet and would be
+just as quiet: a rollback nobody undid, an alias moved by hand, a deploy job
+removed or skipped. It says nothing when `main` is less than twenty minutes old,
+because a publish may still be running and a monitor that cries wolf gets
+switched off.
+
+Worst case exposure is now the length of a CI run for a merge, and a day for
+everything else.
+
+### What only the captain can do
+
+In this order. **Steps 1 and 2 before this is merged**, because after it
+`vercel.json` stops Vercel publishing `main` and the job is the only publisher.
+
+1. Create a Vercel access token. <https://vercel.com/account/settings/tokens> →
+   **Create Token**. Name it `github-actions-invite-platform`. Scope it to the
+   team **Sasha's projects**. Expiry: pick one and put the date in the calendar,
+   because an expired token fails this job loudly rather than silently, which is
+   the right failure but still a failure. Copy the value; it is shown once.
+2. Add it to the repository.
+   <https://github.com/AliaksandraValodzina/invite-platform/settings/secrets/actions>
+   → **New repository secret** → name `VERCEL_TOKEN`, value from step 1.
+   (`VERCEL_ORG_ID` and `VERCEL_PROJECT_ID` are already set as repository
+   variables. They are identifiers, not credentials, and grant nothing without
+   the token. Move them to secrets if you would rather.)
+3. Merge this pull request. Watch the `publish to production` job. Its last step
+   should print `mirthly.app is serving <the merge sha>`.
+4. Confirm by hand once, because this is the first run:
+   `curl https://mirthly.app/api/version` should report that same commit with
+   `"source":"ci"`.
+5. Nothing needs turning off in the Vercel dashboard. `vercel.json` already
+   tells Vercel not to deploy `main`, and it is in the repository where it can
+   be reviewed, which is the same rule this project applies to schema. If you
+   would rather see it in the dashboard too: Project → Settings → Git →
+   **Ignored Build Step** is _not_ the place; the branch setting is
+   `Production Branch`, and it should be left as `main` so previews and manual
+   redeploys keep working.
+6. When the Etsy listing goes live and the account moves off Hobby, re-read this
+   section. Nothing here depends on the plan, but the token does not survive an
+   account transfer.
+
 ## Verifying a deployment, rather than assuming it
 
 Against the deployment, not against localhost:
 
+- `curl <origin>/api/version` and read the commit back. It is the cheapest
+  question and the one that was not being asked: everything below tests
+  behaviour, and this tests whether the behaviour being tested is the current
+  code at all. `.github/workflows/ci.yml` asks it on every merge.
 - `node scripts/check-anon-access.mjs` with the hosted credentials in the
   environment. It seeds through the service role first, so every "cannot read"
   assertion is made against a row that genuinely exists.

@@ -13,9 +13,11 @@
 #   1. `CI gate` is the single required status check, and it fails closed. A job
 #      that was skipped when it should have run makes it red. See
 #      .github/scripts/ci-gate.sh and its tests.
-#   2. This repo is private, so Actions minutes are metered and GitHub rounds
-#      every job up to a whole minute. Job count is therefore a direct cost, and
-#      the expensive work is skipped when it cannot tell us anything.
+#   2. Job count used to be a direct cost, because this repo was private and
+#      GitHub rounds every job up to a whole minute. The repo is public now and
+#      Actions minutes are free, so the frugality below buys wall clock rather
+#      than money. It is kept because it still buys that, and because going
+#      private again would make it cost money once more without warning.
 
 name: CI
 
@@ -26,7 +28,11 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Cancelling a superseded pull request run is free wall clock. Cancelling a
+  # run on main would cancel `deploy` with a publish in flight, which is how you
+  # get a production alias pointing at a build nobody chose. Two merges close
+  # together queue instead.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
@@ -75,6 +81,12 @@ jobs:
       # already has, so it adds no measurable time to this job.
       - name: Test the CI gate logic
         run: bash .github/scripts/ci-gate.test.sh
+
+      # Same reasoning, for the check that decides whether a publish worked. It
+      # has no dependencies and uses Node's own test runner, so it costs nothing
+      # measurable and does not care whether `npm ci` ran.
+      - name: Test the deployed-commit check
+        run: node --test .github/scripts/deployed-commit.test.mjs
 
       - name: Decide whether Playwright can exercise this diff
         id: filter
@@ -390,6 +402,149 @@ jobs:
             echo "**Total billed: ${total} minute(s).**"
             echo ""
             echo "GitHub rounds each job up to a whole minute, so short jobs are not cheap ones. Skipped jobs are not billed."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Publishing, and the reason it is here rather than left to Vercel.
+  #
+  # On 2026-08-24 the merge of #17 produced no Vercel deployment at all. GitHub
+  # handed the push to the Vercel GitHub App - it opened a check suite for that
+  # commit two seconds after the push - and nothing came back: no deployment
+  # record on Vercel, no `Vercel` commit status on GitHub, no error anywhere.
+  # Every push to main before it got a `Vercel` status; that one got none. The
+  # site served the previous commit for a day and a person noticed by reading
+  # the page. Nothing on the Vercel side was misconfigured, which is what makes
+  # it unfixable from here: there is no setting to correct and no delivery log
+  # anybody outside Vercel can read.
+  #
+  # So the publisher is this job, where a failure is a red run on main, and
+  # `vercel.json` turns Vercel's own main deploys off so there is exactly one
+  # publisher. Previews are left to Vercel: a preview failing silently costs a
+  # look at a branch, not a live address.
+  #
+  # The last step is the point. A publish is not finished when the CLI prints a
+  # URL, it is finished when the address a guest types serves the commit that
+  # was merged, and this job stays red until it does.
+  deploy:
+    name: publish to production
+    # `success()` is written out rather than left implicit, because this job
+    # publishes and an `if:` that is subtly wrong here publishes a failed gate.
+    if: ${{ success() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    needs: [gate]
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+      # Pinned for the same reason NODE_VERSION is, and more so: this one
+      # publishes, so a CLI release must not be able to change what a green run
+      # means.
+      VERCEL_CLI_VERSION: '59.5.0'
+    steps:
+      # Loudly, and first. A publisher that is missing its credentials and skips
+      # itself is the exact failure this whole job exists to end.
+      - name: Refuse to run half configured
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=()
+          [ -n "${VERCEL_TOKEN:-}" ] || missing+=("VERCEL_TOKEN (repository secret)")
+          [ -n "${VERCEL_ORG_ID:-}" ] || missing+=("VERCEL_ORG_ID (repository variable)")
+          [ -n "${VERCEL_PROJECT_ID:-}" ] || missing+=("VERCEL_PROJECT_ID (repository variable)")
+          if [ ${#missing[@]} -ne 0 ]; then
+            echo "::error::Nothing was published. Missing: ${missing[*]}"
+            echo 'docs/hosting.md, "Publishing is done by CI", lists what to set and in what order.'
+            exit 1
+          fi
+
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install the Vercel CLI
+        run: npm install --global "vercel@${VERCEL_CLI_VERSION}"
+
+      # Brings down the project's production environment variables, which the
+      # build needs: NEXT_PUBLIC_SITE_URL is inlined at build time and every
+      # canonical URL, OG tag and claim link is built from it.
+      - name: Pull the production environment
+        run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+
+      - name: Stamp this commit into the build
+        shell: bash
+        run: |
+          set -euo pipefail
+          # `vercel build` reads this file. The variable is NEXT_PUBLIC_ for a
+          # mechanical reason and not a privacy one: Vercel does not carry a
+          # build time variable into a function's runtime environment, and
+          # NEXT_PUBLIC_ is the prefix Next inlines at build time, which is what
+          # puts the value somewhere /api/version can read it. A commit hash of
+          # a public repository is not a secret. See src/lib/build-info.ts.
+          echo "NEXT_PUBLIC_BUILD_COMMIT=$GITHUB_SHA" >> .vercel/.env.production.local
+
+      - name: Build
+        # Also in the process environment, so the stamp does not depend on one
+        # assumption about how `vercel build` merges its two sources. If both
+        # were wrong the last step of this job would catch it on the first run.
+        env:
+          NEXT_PUBLIC_BUILD_COMMIT: ${{ github.sha }}
+        run: vercel build --prod --token="$VERCEL_TOKEN"
+
+      - name: Publish
+        id: publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          url=$(vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN" | tail -n 1)
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Deployment: $url"
+
+      - name: Read the address the project itself declares
+        id: origin
+        shell: bash
+        run: |
+          set -euo pipefail
+          # NEXT_PUBLIC_SITE_URL out of the production environment just pulled,
+          # rather than a host written into this file. The app builds its own
+          # links from that value, so checking any other address would be
+          # checking a different site than the one just shipped, and it is the
+          # reason no host name appears anywhere in this repository.
+          line=$(grep -m 1 '^NEXT_PUBLIC_SITE_URL=' .vercel/.env.production.local || true)
+          origin=${line#NEXT_PUBLIC_SITE_URL=}
+          origin=${origin%\"}
+          origin=${origin#\"}
+          if [ -z "$origin" ]; then
+            echo "::error::NEXT_PUBLIC_SITE_URL is not set in the production environment, so there is no address to check."
+            exit 1
+          fi
+          echo "origin=$origin" >> "$GITHUB_OUTPUT"
+
+      # The whole job is for this step. Everything above it is a claim; this
+      # reads the public address over plain HTTP, the way a guest does, and
+      # fails when it is serving anything other than the commit that was merged.
+      - name: Prove the live address is serving this commit
+        run: node .github/scripts/deployed-commit.mjs "$ORIGIN" "$GITHUB_SHA"
+        env:
+          ORIGIN: ${{ steps.origin.outputs.origin }}
+
+      - name: Say what was published
+        if: ${{ always() }}
+        shell: bash
+        env:
+          ORIGIN: ${{ steps.origin.outputs.origin }}
+          URL: ${{ steps.publish.outputs.url }}
+          RESULT: ${{ job.status }}
+        run: |
+          {
+            echo "## Publish"
+            echo ""
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| Commit | \`${GITHUB_SHA}\` |"
+            echo "| Deployment | ${URL:-none} |"
+            echo "| Live address | ${ORIGIN:-unknown} |"
+            echo "| Result | ${RESULT} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
 # ---------------------------------------------------------------------------

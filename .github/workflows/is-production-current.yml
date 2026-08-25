@@ -1,0 +1,143 @@
+# Asks the live address what it is serving, once a day, and says so where
+# somebody will see it.
+#
+# The deploy job in ci.yml already refuses to go green until the address serves
+# the commit that was merged, which covers the way this went wrong on
+# 2026-08-24. This covers the ways it has not gone wrong yet and would be just
+# as quiet: a rollback nobody undid, an alias moved by hand, a deploy job that
+# was removed or skipped, a domain pointed somewhere else. None of those touch
+# a pull request, so none of them can be caught by a pull request.
+#
+# It is separate from ci.yml on purpose. Putting `schedule` on that workflow
+# would run the browser suite and two Supabase stacks every night to answer a
+# question one HTTP request answers.
+#
+# Free: this repository is public, so Actions minutes are not billed.
+
+name: Is production current?
+
+on:
+  schedule:
+    # Daily, at a minute nobody else picked. GitHub queues on-the-hour crons
+    # hardest, and this can wait.
+    - cron: '37 20 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # So a failure becomes an issue rather than an email somebody has filtered.
+  issues: write
+
+env:
+  NODE_VERSION: '24.10.0'
+  VERCEL_CLI_VERSION: '59.5.0'
+
+concurrency:
+  group: is-production-current
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: does the live address serve main
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+    steps:
+      - name: Refuse to run half configured
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${VERCEL_TOKEN:-}" ] || [ -z "${VERCEL_ORG_ID:-}" ] || [ -z "${VERCEL_PROJECT_ID:-}" ]; then
+            echo "::error::Cannot tell what the live address should be. VERCEL_TOKEN, VERCEL_ORG_ID and VERCEL_PROJECT_ID must be set."
+            echo 'docs/hosting.md, "Publishing is done by CI", lists them.'
+            exit 1
+          fi
+
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+
+      - name: Skip while a publish could still be in flight
+        id: recency
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The only realistic false alarm is a merge that landed moments ago
+          # and is still building. Twenty minutes is longer than a full CI run
+          # plus a publish, and a merge landing exactly in this window still gets
+          # checked tomorrow. A monitor that cries wolf is one people switch off.
+          age=$(( $(date +%s) - $(git log -1 --format=%ct main) ))
+          if [ "$age" -lt 1200 ]; then
+            echo "main is ${age}s old, so a publish may still be running. Not judging it."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v6
+        if: ${{ steps.recency.outputs.skip == 'false' }}
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install the Vercel CLI
+        if: ${{ steps.recency.outputs.skip == 'false' }}
+        run: npm install --global "vercel@${VERCEL_CLI_VERSION}"
+
+      # Only to learn the address. Same source as the deploy job uses, so the
+      # two cannot disagree about which site is being talked about.
+      - name: Read the address the project itself declares
+        id: origin
+        if: ${{ steps.recency.outputs.skip == 'false' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+          line=$(grep -m 1 '^NEXT_PUBLIC_SITE_URL=' .vercel/.env.production.local || true)
+          origin=${line#NEXT_PUBLIC_SITE_URL=}
+          origin=${origin%\"}
+          origin=${origin#\"}
+          if [ -z "$origin" ]; then
+            echo "::error::NEXT_PUBLIC_SITE_URL is not set in the production environment, so there is no address to check."
+            exit 1
+          fi
+          echo "origin=$origin" >> "$GITHUB_OUTPUT"
+
+      - name: Ask it what it is serving
+        id: ask
+        if: ${{ steps.recency.outputs.skip == 'false' }}
+        shell: bash
+        env:
+          ORIGIN: ${{ steps.origin.outputs.origin }}
+        run: |
+          set -euo pipefail
+          head=$(git rev-parse main)
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          node .github/scripts/deployed-commit.mjs "$ORIGIN" "$head"
+
+      # Only when the check itself said no. Any other step failing still makes
+      # the run red, but an issue that says "production is stale" when the truth
+      # is "the token expired" is the kind of wrong that gets monitors ignored.
+      - name: Say so where somebody will see it
+        if: ${{ always() && steps.ask.conclusion == 'failure' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ORIGIN: ${{ steps.origin.outputs.origin }}
+          HEAD_SHA: ${{ steps.ask.outputs.head }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          title='Production is not serving main'
+          body=$(
+            printf '%s\n\n' "\`${ORIGIN:-the live address}\` is not serving \`${HEAD_SHA:-main}\`, the current tip of main."
+            printf '%s\n\n' "Run: ${RUN_URL}"
+            printf '%s\n' 'This is the failure from 2026-08-24 repeating in some form: work is merged and the live address does not have it. See docs/hosting.md, "Publishing is done by CI".'
+          )
+          existing=$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi
