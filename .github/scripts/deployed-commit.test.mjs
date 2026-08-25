@@ -169,3 +169,51 @@ test('main() refuses to run with no arguments', async () => {
   const code = await main([], { log: () => {}, error: () => {} })
   assert.equal(code, 2)
 })
+
+/**
+ * The second incident, on 2026-08-25. `vercel pull` will not hand back the
+ * value of an environment variable the project marks sensitive: it writes the
+ * literal placeholder `[SENSITIVE]` instead. NEXT_PUBLIC_SITE_URL is one of
+ * those, so the publish job read that placeholder, found it non-empty, and
+ * handed it here as an origin. `new URL('/api/version', '[SENSITIVE]')` threw
+ * out of the middle of the run and the step died on a stack trace naming
+ * neither the cause nor the check that was skipped.
+ *
+ * The placeholder is Vercel's own text, not a redaction. GitHub masks with
+ * `***`, which is what VERCEL_TOKEN looked like two lines above it in the same
+ * log.
+ */
+test('the second incident: an origin that is not a URL is named, not thrown', async () => {
+  const said = []
+  const code = await main(['[SENSITIVE]', MERGED], {
+    log: () => {},
+    error: (line) => said.push(line),
+    ...noWait,
+  })
+  assert.equal(code, 2)
+  const all = said.join('\n')
+  assert.match(all, /\[SENSITIVE\]/)
+  assert.match(all, /not an absolute http\(s\) address/i)
+})
+
+test('an origin that is only whitespace is refused with the same named cause', async () => {
+  const said = []
+  const code = await main(['   ', MERGED], {
+    log: () => {},
+    error: (line) => said.push(line),
+    ...noWait,
+  })
+  assert.equal(code, 2)
+  assert.match(said.join('\n'), /no address/i)
+})
+
+test('an origin with a host but no scheme is refused rather than guessed at', async () => {
+  const said = []
+  const code = await main(['mirthly.app', MERGED], {
+    log: () => {},
+    error: (line) => said.push(line),
+    ...noWait,
+  })
+  assert.equal(code, 2)
+  assert.match(said.join('\n'), /not an absolute http\(s\) address/i)
+})
