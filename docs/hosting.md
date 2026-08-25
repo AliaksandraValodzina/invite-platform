@@ -316,11 +316,11 @@ which permission.
 `.github/scripts/vercel-scope.mjs` runs before the pull and asks the three
 questions separately, each only when the one before it said yes:
 
-| Question                                      | Asked with                                    | If no                                                         |
-| --------------------------------------------- | --------------------------------------------- | ------------------------------------------------------------- |
-| Is this token a credential Vercel accepts?    | `vercel whoami`                               | `token-not-accepted`: invalid, malformed, or revoked          |
-| Can it resolve `VERCEL_ORG_ID` as a scope?    | `vercel project list --scope <org> --limit 1` | `scope-not-reachable`: the token belongs to a different scope |
-| Does `VERCEL_PROJECT_ID` exist in that scope? | `vercel project inspect <project> --scope`    | `project-not-in-scope`: wrong id, deleted, or transferred     |
+| Question                                      | Asked with                                    | If no                                                                      |
+| --------------------------------------------- | --------------------------------------------- | -------------------------------------------------------------------------- |
+| Is this token a credential the CLI can use?   | `vercel whoami`                               | `token-not-accepted`: refused outright, or accepted with no user behind it |
+| Can it resolve `VERCEL_ORG_ID` as a scope?    | `vercel project list --scope <org> --limit 1` | `scope-not-reachable`: the token belongs to a different scope              |
+| Does `VERCEL_PROJECT_ID` exist in that scope? | `vercel project inspect <project> --scope`    | `project-not-in-scope`: wrong id, deleted, or transferred                  |
 
 All three yes is reported as "not the cause" rather than as "fine", and the pull
 runs and speaks for itself.
@@ -332,6 +332,22 @@ ever echoes it back. What is reported about the token itself is its length and
 whether it has surrounding whitespace, because a secret pasted with a trailing
 newline is a real failure and otherwise an invisible one. Neither is a fragment
 of the value.
+
+### What this found, on 2026-08-25
+
+`token-not-accepted`. `vercel whoami` did not get a refusal; it got an answer,
+and the answer was `Error: User not found.` Vercel accepted the request made
+with the value in `VERCEL_TOKEN` and said there is no user behind it. That is
+why the pull's owner and project lookups came back `403` and why the generic
+sentence appeared: it was reporting the last consequence of a credential that
+does not identify anybody, in the vocabulary of the first thing it happened to
+try.
+
+So the fix is the captain's and it is one thing: create a personal access token
+at <https://vercel.com/account/settings/tokens>, under the scope that owns the
+project, and replace the `VERCEL_TOKEN` repository secret with it. The value in
+the secret now is 60 characters with no surrounding whitespace, which is not the
+shape of one.
 
 `publish-credential` runs the same script on a pull request that changes the
 publisher, because `deploy` runs only on a push to `main` and so every change to

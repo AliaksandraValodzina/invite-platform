@@ -7,6 +7,7 @@ import {
   main,
   probes,
   readable,
+  readIdentityRefusal,
   redact,
   runProbe,
 } from './vercel-scope.mjs'
@@ -30,7 +31,34 @@ test('an unusable token is named as an unusable token', () => {
     answers: { identity: no('Error: Not authorized') },
   })
   assert.equal(verdict.cause, 'token-not-accepted')
-  assert.match(verdict.headline, /not a credential Vercel accepts/)
+  assert.match(verdict.headline, /not a credential this CLI can use/)
+  assert.match(verdict.meaning, /invalid, malformed, revoked or expired/)
+})
+
+// The two refusals need different things done about them, so they are not
+// allowed to collapse into one sentence. "Invalid token" is the wrong sentence
+// for a token that authenticated fine and simply has no user behind it, which
+// is the answer this repository's secret actually got.
+test("a refusal and a missing user are told apart, in the CLI's own terms", () => {
+  assert.match(readIdentityRefusal('Error: User not found.'), /no user/)
+  assert.match(readIdentityRefusal('Error: User not found.'), /not a Vercel personal access token/)
+  assert.match(
+    readIdentityRefusal('The token provided via VERCEL_TOKEN environment variable is not valid.'),
+    /invalid, malformed, revoked or expired/
+  )
+  // Anything unrecognised points at the output rather than inventing a reason.
+  assert.match(readIdentityRefusal('something new'), /own words are above/)
+})
+
+test('a missing user is not reported as an invalid token', () => {
+  const verdict = classify({
+    orgId: ORG,
+    projectId: PROJECT,
+    answers: { identity: no('Error: User not found.') },
+  })
+  assert.equal(verdict.cause, 'token-not-accepted')
+  assert.match(verdict.meaning, /no user/)
+  assert.doesNotMatch(verdict.meaning, /invalid, malformed, revoked or expired/)
 })
 
 test('a token that cannot reach the scope is named as a scope problem, not a linking one', () => {

@@ -99,6 +99,28 @@ export function probes({ orgId, projectId }) {
 }
 
 /**
+ * Says what kind of "no" the identity question got, in the CLI's own words.
+ *
+ * The distinction is worth drawing because the two answers need different
+ * things done about them, and because "invalid token" is the wrong sentence for
+ * a token that authenticated fine and simply has no user behind it.
+ */
+export function readIdentityRefusal(text) {
+  if (/user not found|missing from response/i.test(text)) {
+    return (
+      'Vercel answered the identity request rather than refusing it, and said there is no user. ' +
+      'The value in the secret is not a Vercel personal access token, or the account behind it no ' +
+      'longer exists. A token created at vercel.com/account/settings/tokens answers this question ' +
+      'with a username.'
+    )
+  }
+  if (/not valid|not authorized|invalid token|expired/i.test(text)) {
+    return 'Vercel refused the token outright: it is invalid, malformed, revoked or expired.'
+  }
+  return "The CLI's own words are above; they are the evidence."
+}
+
+/**
  * Turns the answers into a named cause.
  *
  * The three causes are the three questions above, in order, and the first
@@ -112,13 +134,14 @@ export function classify({ orgId, projectId, answers }) {
   const project = answers.project
 
   if (identity && !identity.ok) {
+    const refusal = readIdentityRefusal(`${identity.stdout}\n${identity.stderr}`)
     return {
       cause: 'token-not-accepted',
-      headline: 'VERCEL_TOKEN is not a credential Vercel accepts.',
+      headline: 'VERCEL_TOKEN is not a credential this CLI can use.',
       meaning:
-        'The token is invalid, malformed, or has been revoked. `vercel whoami` was refused, ' +
-        'which happens before any scope or project is looked at.',
-      fix: 'Create a new access token on Vercel and replace the VERCEL_TOKEN repository secret.',
+        '`vercel whoami` could not say who this token is, which happens before any scope or ' +
+        `project is looked at. ${refusal}`,
+      fix: 'Create a personal access token at https://vercel.com/account/settings/tokens, under the scope that owns the project, and replace the VERCEL_TOKEN repository secret with it.',
       whose: 'the captain',
     }
   }
