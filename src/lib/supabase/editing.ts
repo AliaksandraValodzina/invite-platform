@@ -365,6 +365,26 @@ export async function mintSlugForTitle(
  * inside a minute, and the alternative to a button is an email to the captain,
  * which is the thing this whole stage exists to remove.
  */
+export async function setEventStatus(
+  session: BuyerSession,
+  eventId: string,
+  status: 'draft' | 'published'
+): Promise<WriteOutcome> {
+  const response = await buyerRequest(
+    session,
+    'PATCH',
+    `events?id=eq.${encodeURIComponent(eventId)}`,
+    { body: { status }, prefer: 'return=minimal' }
+  )
+
+  return outcome(
+    response,
+    status === 'published'
+      ? 'Your invitation could not be published just now.'
+      : 'Your invitation could not be taken down just now.'
+  )
+}
+
 /**
  * The invitation this account already has in front of guests, if any.
  *
@@ -412,26 +432,6 @@ export async function otherPublishedEvent(
     .safeParse(response.json[0])
 
   return parsed.success ? parsed.data : null
-}
-
-export async function setEventStatus(
-  session: BuyerSession,
-  eventId: string,
-  status: 'draft' | 'published'
-): Promise<WriteOutcome> {
-  const response = await buyerRequest(
-    session,
-    'PATCH',
-    `events?id=eq.${encodeURIComponent(eventId)}`,
-    { body: { status }, prefer: 'return=minimal' }
-  )
-
-  return outcome(
-    response,
-    status === 'published'
-      ? 'Your invitation could not be published just now.'
-      : 'Your invitation could not be taken down just now.'
-  )
 }
 
 /**
