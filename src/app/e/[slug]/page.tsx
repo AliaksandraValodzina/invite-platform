@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation'
 import { BlockList } from '@/components/blocks'
 import { EnvelopeCover, envelopeHeadline } from '@/components/envelope'
 import { GuestNotice } from '@/components/guest-notice'
+import { SiteFooter } from '@/components/site-footer'
 import { ThemeScope } from '@/components/theme-scope'
 import { readSiteConfig } from '@/lib/env'
 import { resolveEventSchedule, type ResolvedSchedule } from '@/lib/event/time'
@@ -154,45 +155,61 @@ function renderPage(
   slug: string
 ) {
   return (
-    /*
-     * `withWebFonts` swaps the head of each font stack for the self hosted face
-     * of the same name, applied here rather than inside ThemeScope so the
-     * component that turns tokens into CSS stays free of anything Next
-     * specific. The preview route does the same thing in the same place.
-     */
-    <ThemeScope
-      tokens={withWebFonts(page.tokens)}
-      /*
-       * The envelope is drawn over the invitation, never in place of it. The
-       * blocks below are rendered whole and stay reachable whether or not the
-       * cover ever opens, which is the contract the whole thing is built to
-       * keep. See src/components/envelope/envelope-cover.tsx.
-       */
-      cover={<EnvelopeCover config={page.envelope} headline={envelopeHeadline(page.blocks)} />}
-    >
-      <BlockList
-        blocks={page.blocks}
-        context={{
-          schedule,
-          nowMs: serverNow(),
-          rsvp: {
-            // RSVPs close at hosting expiry. Collecting new guest PII against
-            // lapsed hosting is the thing grace exists to avoid, not a side
-            // effect of it.
-            phase: state === 'live' ? 'open' : 'closed',
-            questions,
-            /*
-             * Bound here, so the slug a reply is stored against is the slug
-             * this page was rendered for. A slug travelling through the form
-             * would be a slug a guest could edit, and the write path would be
-             * taking the identity of the event from the request rather than
-             * from the page.
-             */
-            submit: submitRsvp.bind(null, slug),
-          },
-        }}
-      />
-    </ThemeScope>
+    <>
+      {/*
+       * `withWebFonts` swaps the head of each font stack for the self hosted
+       * face of the same name, applied here rather than inside ThemeScope so
+       * the component that turns tokens into CSS stays free of anything Next
+       * specific. The preview route does the same thing in the same place.
+       */}
+      <ThemeScope
+        tokens={withWebFonts(page.tokens)}
+        /*
+         * The envelope is drawn over the invitation, never in place of it. The
+         * blocks below are rendered whole and stay reachable whether or not the
+         * cover ever opens, which is the contract the whole thing is built to
+         * keep. See src/components/envelope/envelope-cover.tsx.
+         */
+        cover={<EnvelopeCover config={page.envelope} headline={envelopeHeadline(page.blocks)} />}
+      >
+        <BlockList
+          blocks={page.blocks}
+          context={{
+            schedule,
+            nowMs: serverNow(),
+            rsvp: {
+              // RSVPs close at hosting expiry. Collecting new guest PII against
+              // lapsed hosting is the thing grace exists to avoid, not a side
+              // effect of it.
+              phase: state === 'live' ? 'open' : 'closed',
+              questions,
+              /*
+               * Bound here, so the slug a reply is stored against is the slug
+               * this page was rendered for. A slug travelling through the form
+               * would be a slug a guest could edit, and the write path would be
+               * taking the identity of the event from the request rather than
+               * from the page.
+               */
+              submit: submitRsvp.bind(null, slug),
+            },
+          }}
+        />
+      </ThemeScope>
+
+      {/*
+       * Outside the theme scope, for the reason the template page's own footer
+       * gives: this strip is the product talking rather than the invitation,
+       * and the couple's palette would make it read as part of a design they
+       * chose. It sits under the envelope until the envelope opens.
+       *
+       * The RSVP form already links the privacy statement where a guest is
+       * actually typing their name, which is the more important of the two.
+       * This is what a guest has in the grace state, when replies are closed
+       * and the form is not asking anything: their reply is still stored, and
+       * the page that describes what happens to it is still one tap away.
+       */}
+      <SiteFooter />
+    </>
   )
 }
 

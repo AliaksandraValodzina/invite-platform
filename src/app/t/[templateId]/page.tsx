@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation'
 import { BlockList } from '@/components/blocks'
 import { EnvelopeCover, envelopeHeadline } from '@/components/envelope'
 import { GuestNotice } from '@/components/guest-notice'
+import { SiteFooter } from '@/components/site-footer'
 import { ThemeScope } from '@/components/theme-scope'
 import { templateCopyPath, templatePreviewUrl } from '@/lib/activation/code'
 import { readSiteConfig } from '@/lib/env'
@@ -167,6 +168,14 @@ export default async function TemplatePreviewPage({ params }: PageProps) {
 
         <p className="text-slate-400">Free, and yours to fill in. No card, no password.</p>
       </footer>
+
+      {/*
+       * This page is what an Etsy listing links to, so it is a front door as
+       * much as the home page is, and a front door is where a buyer is asked
+       * for a privacy statement. Separate from the strip above because that one
+       * is the offer and this one is the paperwork.
+       */}
+      <SiteFooter />
     </>
   )
 }

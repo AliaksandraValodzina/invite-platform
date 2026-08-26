@@ -20,6 +20,8 @@
  * anyone holding the link, including after the buyer has stopped paying for it.
  */
 
+import { SiteFooter } from '@/components/site-footer'
+
 const NOTICES = {
   'not-found': {
     eyebrow: 'Invitation',
@@ -50,21 +52,32 @@ export const GUEST_NOTICE_KINDS = Object.keys(NOTICES) as GuestNoticeKind[]
 export function GuestNotice({ kind }: { readonly kind: GuestNoticeKind }) {
   const notice = NOTICES[kind]
 
+  /*
+   * The footer is here rather than on each route that renders a notice, so a
+   * fifth state cannot be added without it. A guest who was sent a link to an
+   * expired or unpublished invitation has already replied to something, or is
+   * about to, and this is the only page in front of them: it is the wrong place
+   * to be the one page with no way to the privacy statement.
+   */
   return (
-    <main
-      data-testid="guest-notice"
-      data-notice={kind}
-      className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center px-6 py-16"
-    >
-      <p className="text-xs tracking-[0.2em] text-slate-500 uppercase">{notice.eyebrow}</p>
+    <div className="flex min-h-dvh flex-col">
+      <main
+        data-testid="guest-notice"
+        data-notice={kind}
+        className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center px-6 py-16"
+      >
+        <p className="text-xs tracking-[0.2em] text-slate-500 uppercase">{notice.eyebrow}</p>
 
-      <h1 className="mt-4 font-serif text-3xl leading-tight text-balance text-slate-900">
-        {notice.heading}
-      </h1>
+        <h1 className="mt-4 font-serif text-3xl leading-tight text-balance text-slate-900">
+          {notice.heading}
+        </h1>
 
-      <hr className="mt-6 w-12 border-t border-slate-300" />
+        <hr className="mt-6 w-12 border-t border-slate-300" />
 
-      <p className="mt-6 text-base leading-relaxed text-pretty text-slate-600">{notice.body}</p>
-    </main>
+        <p className="mt-6 text-base leading-relaxed text-pretty text-slate-600">{notice.body}</p>
+      </main>
+
+      <SiteFooter />
+    </div>
   )
 }
