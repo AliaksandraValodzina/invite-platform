@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { templateCopyPath } from '@/lib/activation/code'
 import {
   CLAIM_COOKIE,
   DASHBOARD_DESTINATION,
@@ -26,6 +27,35 @@ describe('what counts as a destination', () => {
 
   it('accepts the dashboard', () => {
     expect(safeDestination('/dashboard')).toBe('/dashboard')
+  })
+
+  /*
+   * The free launch's open copy link. It is built in one place and admitted in
+   * another, so the assertion is that the built path is the admitted one rather
+   * than that a hand-written string matches a hand-written pattern: a route
+   * that moved and an allow list that did not would drop somebody at an empty
+   * dashboard after they pressed "make this invitation yours".
+   */
+  it('accepts the open copy link, and takes the path from the builder', () => {
+    const path = templateCopyPath('4f6a2c1e-9b3d-4a7f-8c21-0d5e6f7a8b90')
+
+    expect(path).toBe('/t/4f6a2c1e-9b3d-4a7f-8c21-0d5e6f7a8b90/use')
+    expect(safeDestination(path)).toBe(path)
+  })
+
+  it('refuses the preview itself, which creates nothing and needs no session', () => {
+    expect(safeDestination('/t/4f6a2c1e-9b3d-4a7f-8c21-0d5e6f7a8b90')).toBeNull()
+  })
+
+  it('refuses a copy link whose template id is not a template id', () => {
+    for (const hostile of [
+      '/t/../dashboard/use',
+      '/t/not-a-uuid/use',
+      '/t/4f6a2c1e-9b3d-4a7f-8c21-0d5e6f7a8b90/use/../../evil',
+      '/t/4f6a2c1e-9b3d-4a7f-8c21-0d5e6f7a8b90/use?next=//evil.test',
+    ]) {
+      expect(safeDestination(hostile), hostile).toBeNull()
+    }
   })
 
   it('refuses every shape that leaves the site', () => {

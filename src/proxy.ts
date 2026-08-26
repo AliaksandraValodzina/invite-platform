@@ -72,10 +72,26 @@ export const config = {
  */
 const SESSION_PATHS = ['/dashboard', '/claim']
 
+/**
+ * `/t/<templateId>/use`, the free launch's open copy link.
+ *
+ * It sits inside the `/t/*` prefix and needs the exact opposite of what that
+ * prefix gets, which is why it is matched before the cache header below rather
+ * than left to the prefix. The preview one segment up is a design belonging to
+ * nobody and is meant to be held by every cache between here and a phone; this
+ * one reads a session, mints a row and answers differently for every visitor.
+ *
+ * It needs the session half too, for the reason `/claim/*` does: somebody who
+ * signed in three months ago and opens a shared preview today arrives with an
+ * hour-old access token, and without the refresh they would be asked for their
+ * email again on a page that was about to hand them their invitation.
+ */
+const TEMPLATE_COPY = /^\/t\/[^/]+\/use\/?$/
+
 export async function proxy(request: NextRequest): Promise<NextResponse> {
   const path = request.nextUrl.pathname
 
-  if (SESSION_PATHS.some((prefix) => path.startsWith(prefix))) {
+  if (SESSION_PATHS.some((prefix) => path.startsWith(prefix)) || TEMPLATE_COPY.test(path)) {
     return signedIn(request)
   }
 
@@ -85,6 +101,9 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
    * nobody and meant to spread. It is written out here rather than left to
    * Next's own header for one reason, which is that Next's default stale window
    * on a route like this is nearly a year. See TEMPLATE_PREVIEW_CACHE_CONTROL.
+   *
+   * `/t/<templateId>/use` has already been taken by TEMPLATE_COPY above and
+   * never reaches this line.
    */
   const isTemplatePreview = path === '/t' || path.startsWith('/t/')
   response.headers.set(

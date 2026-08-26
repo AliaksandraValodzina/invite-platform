@@ -19,7 +19,12 @@ import {
 import { parseWallClock } from '@/lib/event/time'
 import { DEFAULT_RSVP_QUESTIONS } from '@/lib/rsvp/questions'
 import { currentBuyer } from '@/lib/supabase/buyer'
-import { loadEditableEvent, type EditableEvent } from '@/lib/supabase/editing'
+import {
+  loadEditableEvent,
+  otherPublishedEvent,
+  type EditableEvent,
+  type PublishedElsewhere,
+} from '@/lib/supabase/editing'
 import {
   EMPTY_EVENT_CONTENT,
   EMPTY_THEME_OVERRIDE,
@@ -131,6 +136,15 @@ export default async function EditPage({ params, searchParams }: PageProps) {
     )
   }
 
+  /*
+   * One published invitation at a time per account, said before the button
+   * rather than after it. A control that always refuses is worse than no
+   * control: the buyer needs to know which invitation is in the way and that
+   * taking it down is what frees this one. Only asked when this event is not
+   * the published one, because then the answer cannot change what is on screen.
+   */
+  const live = event.status === 'published' ? null : await otherPublishedEvent(buyer, event.id)
+
   const sections = editableSections(definition.document, content.document)
   const orphans = Object.keys(content.document.blocks).filter(
     (key) => !definition.document.blocks.some((block) => block.id === key)
@@ -143,7 +157,7 @@ export default async function EditPage({ params, searchParams }: PageProps) {
       <Invitation event={event} sections={sections} orphans={orphans} />
       <Colours event={event} />
       <ReplyForm event={event} />
-      <Publication event={event} />
+      <Publication event={event} live={live} />
     </Shell>
   )
 }
@@ -522,7 +536,14 @@ function ReplyForm({ event }: { readonly event: EditableEvent }) {
  * because the link is what a buyer is about to paste into a group chat and the
  * one thing on this page they cannot change afterwards.
  */
-function Publication({ event }: { readonly event: EditableEvent }) {
+function Publication({
+  event,
+  live,
+}: {
+  readonly event: EditableEvent
+  /** Another invitation on this account that is already published, or null. */
+  readonly live: PublishedElsewhere | null
+}) {
   const published = event.status === 'published'
 
   return (
@@ -546,11 +567,31 @@ function Publication({ event }: { readonly event: EditableEvent }) {
             invitation with a notice; nothing already replied is lost.
           </p>
         </SaveForm>
+      ) : live !== null ? (
+        /*
+         * No Publish button at all, because pressing it would be refused by
+         * `public.events_publish_limit` and a button that cannot work is a
+         * worse answer than a sentence saying why. The way through is stated
+         * and it is one link away.
+         */
+        <div data-testid="publication-blocked" className="rounded-md bg-slate-100 p-4 text-sm">
+          <p className="text-slate-700">
+            <strong>{live.title}</strong> is published on this account, and only one invitation can
+            be published at a time. Take that one down and this one can go up. Nothing on either is
+            lost.
+          </p>
+          <p className="mt-2">
+            <Link href={`/dashboard/${live.id}/edit`} className="underline">
+              Open {live.title}
+            </Link>
+          </p>
+        </div>
       ) : (
         <SaveForm action={publishInvitation.bind(null, event.id)} submitLabel="Publish">
           <p data-testid="publication-state" className="text-sm text-slate-600">
             Not published. Anyone opening the link sees a notice instead of the invitation. Publish
-            when you are ready to share it.
+            when you are ready to share it. One invitation at a time can be published on an account;
+            the rest stay as drafts, and drafts are free.
           </p>
         </SaveForm>
       )}

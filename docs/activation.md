@@ -5,29 +5,117 @@ middle. It is the point where this stops being a service somebody delivers by
 hand and becomes a product.
 
 The code is `src/lib/activation/` (pure and service role), `src/app/claim/[code]/`
-(the single use link), `src/app/t/[templateId]/` (the public preview),
+(the single use link), `src/app/t/[templateId]/` (the public preview) and
+`src/app/t/[templateId]/use/` (the free launch's open copy link),
 `scripts/issue-codes.ts` (what the captain runs), and the publish and confirm
 halves of `src/app/dashboard/[id]/edit/`. Start at `docs/data-model.md` for what
 an activation code is, and `docs/editing.md` for what a buyer does after they
 have one.
 
-## Two links, and they must never be conflated
+## Three links, and they must never be conflated
 
-| Link              | What it does                                                   | Who may hold it                                                              |
-| ----------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `/t/<templateId>` | Renders a template read only. Copies nothing, creates nothing. | Anybody. It belongs in the Etsy listing and on social, and it should spread. |
-| `/claim/<code>`   | Creates the buyer's own copy, then is spent.                   | One buyer, delivered in the Etsy order message.                              |
+| Link                  | What it does                                                   | Who may hold it                                                              |
+| --------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `/t/<templateId>`     | Renders a template read only. Copies nothing, creates nothing. | Anybody. It belongs in the Etsy listing and on social, and it should spread. |
+| `/t/<templateId>/use` | Creates the visitor's own copy, behind sign-in. Not spent.     | Anybody. **Free launch only.** See the gate below.                           |
+| `/claim/<code>`       | Creates the buyer's own copy, then is spent.                   | One buyer, delivered in the Etsy order message.                              |
 
-An **open** "use this template" link is wrong here, and the reasoning matters
-because it is easy to argue the other way from Canva. Canva can afford open
-template links because it monetises a subscription. Here the invitation **is**
-the purchase, so an open copy link turns one sale into unlimited invitations.
-And these URLs travel: a buyer who posts their own invitation publicly has
-posted its address.
+They are separate files, separate reads and separate cache headers.
+`tests/e2e/activation.spec.ts` asserts of the preview that the events table did
+not grow, and `tests/e2e/open-copy-link.spec.ts` walks the copy link.
 
-So the two routes are separate files, separate reads and separate cache
-headers, and `tests/e2e/activation.spec.ts` asserts of the preview that the
-events table did not grow.
+### Why the middle row exists, and why it used to be forbidden
+
+This document used to say an open "use this template" link was wrong here, and
+the argument was sound: Canva can afford open template links because it
+monetises a subscription, and here the invitation **is** the purchase, so an
+open copy link turns one sale into unlimited invitations. These URLs travel too:
+a buyer who posts their own invitation publicly has posted its address.
+
+The captain's decision on 2026-08-24 was _"LET'S MAKE one link for all for
+now"_, paired with releasing the first template **free**. Free changes the
+arithmetic rather than the reasoning. Nothing is being sold, so a free copy
+costs nothing, and a link that has to stay secret to be safe is not a link you
+can put on an Etsy listing.
+
+### The gate this route is not allowed to outlive
+
+**`/t/<templateId>/use` must not still be the active route when the first PAID
+listing publishes.** An open copy link plus a price is a free product.
+`ip-decision-order-verification` is the captain-held decision that replaces it
+and it is still open. This is why `/claim/<code>`, `scripts/issue-codes.ts` and
+the `activation_codes` table are untouched: they are the paid route the day the
+captain charges, and deleting them because they are currently unused would be
+the expensive kind of tidying.
+
+The route says so in `src/app/t/[templateId]/use/page.tsx` and
+`src/lib/activation/copy.ts`, which is where somebody about to change it will be
+standing.
+
+### What the copy link does and does not have
+
+It has no code, so there is nothing to spend, nothing to mark used and nothing
+to be idempotent about. Pressing it twice is two copies, deliberately: copies
+and drafts are unlimited by the same decision that opened the link, and two
+people planning two weddings from one design is the product working. That is
+the opposite of the claim link, where a second tap must open the invitation
+somebody already paid for.
+
+Both doors mint the same thing through `src/lib/activation/mint.ts`: a draft
+event, its question set from `defaultQuestionRows`, and content revision 1. One
+module rather than two, because the first thing that would drift between two
+copies of that list is a `pii_class`, which decides what the retention sweep
+erases.
+
+A free copy is created with `basic` tier and twelve months of hosting
+(`FREE_COPY_HOSTING_MONTHS`), the same term `scripts/issue-codes.ts` defaults a
+paid code to. `basic` because it came from no listing at all, and twelve months
+because a shorter one would be a different promise that nobody has made.
+
+### Two things that have to be true when somebody arrives
+
+**A visitor who is not signed in still sees the invitation.** The preview is the
+sales pitch, and sign-in in front of it is a door in front of the shop window.
+That is why copying is a second route rather than a branch inside the first: a
+page that rendered differently for a signed-in visitor could not be served from
+an edge, and `/t/<templateId>` is `public, s-maxage=300` precisely because it
+carries nothing about anybody.
+
+**Signing in to copy returns them to the copy, not to a dashboard.** Same two
+carriers as a claim, same allow list, same cookie: `src/lib/auth/destination.ts`
+admits `/t/<templateId>/use` alongside `/claim/<code>`. Losing a claim across
+the mailbox costs a purchase; losing a copy costs the person, because nobody
+presses "make this mine" twice.
+
+### The limit that now carries the whole weight
+
+**One published invitation at a time per account**, unlimited drafts and copies,
+the captain's decision of 2026-08-24. With an open copy link that limit is the
+only thing between one free template and somebody running a wedding business on
+it, because every published event costs hosting for its full term and a draft
+costs nothing.
+
+It is enforced in the database by `public.events_publish_limit`
+(`20260826010000_one_published_invitation.sql`), not in the publish button, and
+the reason is the one AGENTS.md already gives for upload caps: a check in front
+of a write can be raced, and two tabs pressing Publish are two transactions that
+each see no published row under READ COMMITTED. The trigger takes an advisory
+lock on the owner before it looks. A buyer holds their own access token and
+could send `PATCH /events` with `{"status":"published"}` at PostgREST with no
+page in the middle, so the rule fires on any write by `authenticated` rather
+than only on the route.
+
+The rule's boundary is stated rather than discovered: the platform's own service
+role is outside it, because seeding the four serving-state fixtures and a
+support action putting somebody's second page back up are decisions a person
+made with the platform's key, not a buyer dodging a limit.
+`supabase/tests/11_publish_limit.test.sql` asserts both the rule and the
+boundary.
+
+The editor asks before it offers the button, so a buyer whose account already
+has a live invitation is told which one is in the way and that taking it down is
+the way through (`src/lib/editor/publish-limit.ts`). That read is the sentence,
+never the enforcement.
 
 ## The claim link is the code
 
@@ -128,14 +216,22 @@ Given both, a confirmation step between the link and the editor would buy
 nothing and cost the thing that was asked for: the buyer clicks a link and is in
 their invitation, Canva-style, having typed no code.
 
-## Signing in from a claim link creates the account
+## Signing in from a claim link, or from the copy link, creates the account
 
 `/login` asks the auth API with `should_create_user: false`, because an address
-typed into a form is not evidence of anything. The claim page asks with it true,
-and **holding an unspent activation is the only authorisation this product
-recognises for becoming a customer**. The code is re-read inside the action
+typed into a form is not evidence of anything. Two pages ask with it true, and
+they are the two authorisations this product recognises for becoming a customer:
+
+- **holding an unspent activation**, on `/claim/<code>`
+- **a published template offered free**, on `/t/<templateId>/use`
+
+The second is the free launch's, and it is the half of that route which also has
+to be taken back when the first paid listing publishes, not just the copy
+button. In both cases the thing that authorises it is re-read inside the action
 rather than trusted from the page that rendered the form, because a server
-action is a POST endpoint reachable directly.
+action is a POST endpoint reachable directly. On the copy link that matters for
+a specific reason: a template id is not a secret, so a template nobody has
+published must create no account.
 
 A code that is spent, revoked or lapsed still gets a sign-in link, because the
 person holding it may well have an account already and the answer they need is
@@ -302,7 +398,11 @@ hour-old access token, and without the refresh they would be asked for their
 email again, which on a paid link reads as the purchase not being recognised.
 
 `/t/*` is the opposite decision, for the opposite reason: it carries nothing
-about anybody, so `public, s-maxage=300` with an hour of stale. The explicit
+about anybody, so `public, s-maxage=300` with an hour of stale. `/t/<id>/use`
+sits one segment inside that prefix and needs the exact opposite header, which
+is the shape of mistake a prefix rule makes silently, so `src/proxy.ts` matches
+it first and `tests/e2e/caching.spec.ts` reads both off the wire. A cached copy
+link would serve one visitor's answer to the next. The explicit
 stale window is not decoration. Next's own default for a route like this is
 nearly a year, which would leave a design corrected on Monday still on screen in
 the spring.
@@ -321,8 +421,17 @@ genuine double tap as two concurrent requests, a link claimed on another
 account, the public preview creating nothing, publish and unpublish seen from
 the guest side, and the confirmation.
 
+`tests/e2e/open-copy-link.spec.ts` walks the copy link: the signed-out preview
+with its call to action, the copy route creating nothing before sign-in, the
+sign-in landing in the visitor's own editor rather than a dashboard, the cookie
+carrier when the link loses its query, two presses making two copies, and the
+published-invitation limit refusing a second publish on a page that was
+rendered when it still looked possible.
+
 `tests/unit/activation/` covers the code format, the hosting arithmetic, the
 placeholder both gates have to accept, and the agreement with the migration.
+`tests/unit/dashboard/publish-limit.test.ts` holds the sentence the route
+matches to the sentence the migration raises.
 `tests/unit/auth/destination.test.ts` covers the two carriers and the open
 redirect refusals. `tests/unit/editor/load-bearing.test.ts` covers the list, the
 comparison and the replay.

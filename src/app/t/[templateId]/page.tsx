@@ -5,7 +5,7 @@ import { BlockList } from '@/components/blocks'
 import { EnvelopeCover, envelopeHeadline } from '@/components/envelope'
 import { GuestNotice } from '@/components/guest-notice'
 import { ThemeScope } from '@/components/theme-scope'
-import { templatePreviewUrl } from '@/lib/activation/code'
+import { templateCopyPath, templatePreviewUrl } from '@/lib/activation/code'
 import { readSiteConfig } from '@/lib/env'
 import { resolveEventSchedule } from '@/lib/event/time'
 import { PREVIEW_QUESTIONS } from '@/lib/preview/fixture'
@@ -18,18 +18,19 @@ import { templatePreviewRsvpSubmit } from './actions'
 /**
  * `/t/<templateId>`: a template, rendered as a guest would meet it.
  *
- * This is one of the two links activation has, and the two must never be
- * confused. This one may be held by anybody: it goes in the Etsy listing and on
- * social, it renders a design and it creates nothing. `/claim/<code>` is the
- * other, it is single use, it makes the buyer's own copy, and it is delivered
- * privately in the order message.
+ * This page may be held by anybody: it goes in the Etsy listing and on social,
+ * it renders a design, and it still creates nothing. Copying is one segment
+ * below at `./use/page.tsx`, which is a separate route because everything about
+ * it is the opposite: signed in, dynamic and never cached. Nothing on this page
+ * varies by who is asking, which is what lets an edge hold it.
  *
- * The argument for keeping them apart is worth writing down because it is easy
- * to argue the other way from Canva, where a "use this template" link is open.
- * Canva can afford that because it monetises a subscription. Here the
- * invitation IS the purchase, so an open copy link turns one sale into
- * unlimited invitations. And these URLs travel: a buyer who posts their own
- * invitation publicly has posted its address.
+ * The strip at the bottom carries the same call to action for everybody,
+ * signed in or not, and it is a plain anchor rather than a `Link`: Next
+ * prefetches a `Link`, and the route it points at makes a copy on the GET.
+ *
+ * **A visitor who is not signed in still sees the whole invitation.** The
+ * preview is the sales pitch, and putting sign-in in front of it would be
+ * putting a door in front of the shop window.
  *
  * What is on screen is the template's own defaults through the same
  * `resolveEventPage` a guest page uses, so a preview cannot quietly drift from
@@ -139,10 +140,32 @@ export default async function TemplatePreviewPage({ params }: PageProps) {
        */}
       <footer
         data-testid="template-preview-footer"
-        className="bg-slate-900 px-4 py-6 text-center text-sm text-slate-200"
+        className="flex flex-col items-center gap-4 bg-slate-900 px-4 py-8 text-center text-sm text-slate-200"
       >
-        This is a preview of an invitation design. The names, date and place are examples. Nothing
-        typed here is sent or saved.
+        <p>
+          This is a preview of an invitation design. The names, date and place are examples. Nothing
+          typed here is sent or saved.
+        </p>
+
+        {/*
+         * The same link for everybody, which is the whole of the captain's
+         * decision on 2026-08-24: entitlement is handled at the account level
+         * rather than by holding a secret, because a link that has to stay
+         * secret to be safe is not a link you can put on an Etsy listing.
+         *
+         * A plain anchor, not `Link`. Next prefetches a `Link`, and this points
+         * at a route that mints a copy on the GET, so a prefetch would be a
+         * press nobody made.
+         */}
+        <a
+          data-testid="template-copy-link"
+          href={templateCopyPath(templateId)}
+          className="rounded-md bg-white px-5 py-3 font-medium text-slate-900"
+        >
+          Make this invitation yours
+        </a>
+
+        <p className="text-slate-400">Free, and yours to fill in. No card, no password.</p>
       </footer>
     </>
   )

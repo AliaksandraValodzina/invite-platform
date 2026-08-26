@@ -141,3 +141,23 @@ export function templatePreviewPath(templateId: string): string {
 export function templatePreviewUrl(siteUrl: string, templateId: string): string {
   return `${siteUrl.replace(/\/$/, '')}${templatePreviewPath(templateId)}`
 }
+
+/**
+ * Where the open copy link points, as a path.
+ *
+ * One segment below the preview, because it is the same template seen from the
+ * other side, and a separate route because everything about it is the opposite:
+ * the preview is public, cached and indexed, and this is signed in, dynamic and
+ * `private, no-store` (src/proxy.ts).
+ *
+ * It is a destination a magic link may be sent to, so `safeDestination` in
+ * src/lib/auth/destination.ts holds a pattern that must keep matching what this
+ * builds. tests/unit/auth/destination.test.ts is where the two are held
+ * together.
+ *
+ * Temporary by decision. This route belongs to the free launch and must be
+ * replaced before the first paid listing publishes. See src/lib/activation/copy.ts.
+ */
+export function templateCopyPath(templateId: string): string {
+  return `${templatePreviewPath(templateId)}/use`
+}
