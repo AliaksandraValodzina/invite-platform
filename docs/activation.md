@@ -112,6 +112,13 @@ made with the platform's key, not a buyer dodging a limit.
 `supabase/tests/11_publish_limit.test.sql` asserts both the rule and the
 boundary.
 
+The limit counts `events.status`, and nothing else. An invitation whose hosting
+has lapsed still holds the slot until the buyer takes it down, which is one
+press and is what the editor tells them. Making expiry release it would mean
+comparing `hosting_expires_at` and `grace_ends_at` somewhere other than
+`public.event_state_at`, and AGENTS.md is explicit that nothing in this
+application compares those a second time.
+
 The editor asks before it offers the button, so a buyer whose account already
 has a live invitation is told which one is in the way and that taking it down is
 the way through (`src/lib/editor/publish-limit.ts`). That read is the sentence,
