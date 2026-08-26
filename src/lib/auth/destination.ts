@@ -2,11 +2,13 @@
  * Where a magic link lands, and how a claim survives the round trip through a
  * mailbox.
  *
- * This is the failure the whole activation flow is built around. A buyer clicks
- * the link in their Etsy delivery, is not signed in, asks for a sign-in link,
- * opens their mail, clicks it, and arrives back here holding a session and
- * nothing else. If the claim token was lost on the way, what they see is an
- * empty dashboard, and what that reads as is "I paid and received nothing".
+ * This is the failure the whole activation flow is built around. Somebody opens
+ * a link that is going to give them an invitation, is not signed in, asks for a
+ * sign-in link, opens their mail, clicks it, and arrives back holding a session
+ * and nothing else. If the destination was lost on the way, what they see is an
+ * empty dashboard. On a claim link that reads as "I paid and received nothing";
+ * on the open copy link it reads as the product not working, and losing
+ * somebody at the sign-in step is losing them entirely.
  *
  * So the token is carried twice, by two mechanisms that fail differently:
  *
@@ -20,10 +22,11 @@
  *                                  everything done to the URL. It cannot cross
  *                                  devices.
  *
- * Between them the only way to lose the claim is to change device AND have the
- * link rewritten. And even then nothing is spent: the claim link in the Etsy
- * message still works, because a code is only spent by a request that creates
- * an event.
+ * Between them the only way to lose the destination is to change device AND have
+ * the link rewritten. And even then nothing is spent: the claim link in the
+ * Etsy message still works, because a code is only spent by a request that
+ * creates an event, and the copy link is public and can simply be opened
+ * again.
  *
  * `?next=` wins when both are present, because it is the link the buyer
  * actually opened and the cookie may be from an older attempt.
@@ -33,7 +36,7 @@
  * A `next` parameter is an open redirect unless something refuses to follow it
  * off the site, and "starts with a slash" is not that something: `//evil.test`
  * and `/\evil.test` both start with one and both leave. So this does not try to
- * decide whether an arbitrary string is safe. It matches against the two shapes
+ * decide whether an arbitrary string is safe. It matches against the three shapes
  * this product ever produces and rejects everything else, including anything
  * with a host, a scheme, a backslash or a second leading slash.
  */
@@ -44,7 +47,15 @@ export const DASHBOARD_DESTINATION = '/dashboard'
 /** The query parameter the callback reads. */
 export const NEXT_PARAM = 'next'
 
-/** The cookie that carries a pending claim across the mailbox. */
+/**
+ * The cookie that carries a pending claim, or a pending copy, across the
+ * mailbox.
+ *
+ * One cookie for both, because it holds a destination rather than a token: it
+ * is a note about what this browser was in the middle of, and a browser is only
+ * ever in the middle of one thing. Its name is left as it was so that a cookie
+ * set before this deploy still resolves after it.
+ */
 export const CLAIM_COOKIE = 'ip_claim'
 
 /**
@@ -57,10 +68,28 @@ export const CLAIM_COOKIE_MAX_AGE = 60 * 30
 /**
  * The only destinations a magic link may be sent to.
  *
- * `/claim/<code>` is the one that matters. `/dashboard` is here so that the
- * fallback is expressible as a destination rather than as a special case.
+ * Two of them are the point of this file, and they are the two ways somebody
+ * gets an invitation of their own:
+ *
+ *   `/claim/<code>`         a paid activation, delivered in an Etsy order
+ *                           message and spent once
+ *   `/t/<templateId>/use`   the free launch's open copy link, which anybody may
+ *                           hold (src/lib/activation/copy.ts)
+ *
+ * Losing either one across the mailbox is the same failure with two different
+ * costs. On the paid link somebody arrives signed in having paid and received
+ * nothing. On the free link they arrive signed in at an empty dashboard having
+ * pressed "make this mine" on an invitation they can no longer see, which is
+ * losing them entirely: nobody presses it a second time.
+ *
+ * `/dashboard` is here so that the fallback is expressible as a destination
+ * rather than as a special case.
  */
-const ALLOWED_DESTINATIONS: readonly RegExp[] = [/^\/claim\/[A-Za-z0-9-]{1,80}$/, /^\/dashboard$/]
+const ALLOWED_DESTINATIONS: readonly RegExp[] = [
+  /^\/claim\/[A-Za-z0-9-]{1,80}$/,
+  /^\/t\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/use$/i,
+  /^\/dashboard$/,
+]
 
 /** The destination if it is one this product produces, and null otherwise. */
 export function safeDestination(value: string | null | undefined): string | null {

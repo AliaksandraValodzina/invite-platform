@@ -27,6 +27,7 @@ import {
   type JsonRecord,
   type PictureValue,
 } from '@/lib/editor'
+import { alreadyPublished, PUBLISH_LIMIT_MARKER } from '@/lib/editor/publish-limit'
 import {
   confirming,
   encodeReplay,
@@ -51,6 +52,7 @@ import {
   countReplies,
   loadEditableEvent,
   mintSlugForTitle,
+  otherPublishedEvent,
   pictureForUpload,
   retireQuestion,
   saveEventContent,
@@ -572,8 +574,33 @@ async function setStatus(eventId: string, status: 'draft' | 'published'): Promis
   const loaded = await open(eventId)
   if ('failure' in loaded) return loaded.failure
 
+  /*
+   * One published invitation at a time per account, and the reason this is
+   * asked BEFORE the write is only the sentence. The rule itself is
+   * `public.events_publish_limit` in the database, because two tabs pressing
+   * publish are two requests and a check in front of a write can be raced. What
+   * this buys is a refusal that names the invitation in the way, which is the
+   * difference between a limit somebody can act on and one that reads as a bug.
+   */
+  if (status === 'published') {
+    const live = await otherPublishedEvent(loaded.buyer, eventId)
+    if (live !== null) return alreadyPublished(live.title)
+  }
+
   const written = await setEventStatus(loaded.buyer, eventId, status)
-  if (!written.ok) return failed(written.message, [{ path: 'database', message: written.detail }])
+  if (!written.ok) {
+    /*
+     * The race the check above cannot close, arriving as the database's own
+     * refusal. Recognised by the words the trigger raises rather than by a
+     * status code, because PostgREST reports every constraint the same way and
+     * a buyer told "your invitation could not be published just now" would try
+     * again forever.
+     */
+    if (status === 'published' && written.detail.includes(PUBLISH_LIMIT_MARKER)) {
+      return alreadyPublished(null)
+    }
+    return failed(written.message, [{ path: 'database', message: written.detail }])
+  }
 
   dropCachedCopies(eventId, loaded.event.slug)
 

@@ -5,12 +5,17 @@ import {
   NEW_EVENT_TIME_ZONE,
   NEW_EVENT_TITLE,
   placeholderStart,
-} from '@/lib/activation/claim'
+} from '@/lib/activation/mint'
 import { isSupportedTimeZone, parseWallClock, resolveEventSchedule } from '@/lib/event/time'
 
 /**
- * The row a spent code creates, and the two columns on it that cannot be
- * arbitrary.
+ * The row a new invitation is minted with, and the two columns on it that
+ * cannot be arbitrary.
+ *
+ * Both doors reach the same placeholder: a spent claim code and the free
+ * launch's open copy link at `/t/<templateId>/use`. They share
+ * `src/lib/activation/mint.ts`, which is where these constants live and why
+ * this file reads them from there rather than from the claim path.
  *
  * `events.starts_at_local` and `events.time_zone` are NOT NULL and nobody knows
  * the real answer at the moment a code is spent, so a placeholder goes in. The

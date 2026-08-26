@@ -25,13 +25,17 @@ import { serviceGet } from './service'
  * timestamps: a public page has no use for them, and the read that names only
  * what it renders cannot leak what it did not.
  *
- * ## This is not the claim link
+ * ## The preview itself still creates nothing
  *
- * A preview creates nothing and copies nothing, which is what lets it be handed
- * to anybody. That separation is the point: an open "use this template" link
- * would turn one sale into unlimited invitations, because here the invitation
- * is the purchase rather than a feature of a subscription somebody keeps paying
- * for. See docs/activation.md.
+ * Rendering a template copies nothing, which is what lets this page be cached,
+ * indexed and handed to anybody with no session at all. Making a copy is a
+ * different request to a different route (`/t/<templateId>/use`), and that
+ * route is `force-dynamic` and signed in. Keeping the two apart is what keeps
+ * the sales pitch free of a door.
+ *
+ * The open copy link is the free launch's route and is deliberately temporary.
+ * It must be replaced before the first PAID listing publishes, because an open
+ * copy link plus a price is a free product. See docs/activation.md.
  */
 
 /** Matches the uuid `templates.id` holds, so a junk path costs no query. */
@@ -113,6 +117,59 @@ export async function loadTemplatePreview(templateId: string): Promise<TemplateP
       themeOverride: EMPTY_THEME_OVERRIDE,
     },
   }
+}
+
+/**
+ * The template behind an open copy link, or why there is none.
+ *
+ * `status=eq.published` again, and `revalidate: false` this time. The preview
+ * above may be served from a cache because it renders a design; this decides
+ * whether to write a row, and a cached "yes, still published" is a copy minted
+ * from a template somebody withdrew.
+ *
+ * The name comes back because the copy route says it on screen: somebody who
+ * has just signed in needs to see which design they are about to be given.
+ */
+export type CopyableTemplate = { readonly id: string; readonly name: string }
+
+export type CopyableLookup =
+  | { readonly kind: 'found'; readonly template: CopyableTemplate }
+  /** No such template, or one nobody has published. Both are a 404. */
+  | { readonly kind: 'not-found' }
+  | { readonly kind: 'unavailable'; readonly reason: string }
+
+export async function findCopyableTemplate(templateId: string): Promise<CopyableLookup> {
+  if (!isPossibleTemplateId(templateId)) return { kind: 'not-found' }
+
+  let response
+  try {
+    response = await serviceGet(
+      `templates?${new URLSearchParams({
+        id: `eq.${templateId}`,
+        status: 'eq.published',
+        select: 'id,name',
+        limit: '1',
+      }).toString()}`,
+      { revalidate: false }
+    )
+  } catch (error) {
+    return {
+      kind: 'unavailable',
+      reason: error instanceof Error ? error.message : 'the database could not be reached',
+    }
+  }
+
+  if (!response.ok) {
+    return { kind: 'unavailable', reason: `the database answered ${response.status}` }
+  }
+  if (!Array.isArray(response.json) || response.json.length === 0) return { kind: 'not-found' }
+
+  const parsed = z.object({ id: z.string(), name: z.string() }).safeParse(response.json[0])
+  if (!parsed.success) {
+    return { kind: 'unavailable', reason: 'the template row was not the shape this deploy expects' }
+  }
+
+  return { kind: 'found', template: { id: parsed.data.id, name: parsed.data.name } }
 }
 
 /**

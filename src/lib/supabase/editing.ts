@@ -386,6 +386,55 @@ export async function setEventStatus(
 }
 
 /**
+ * The invitation this account already has in front of guests, if any.
+ *
+ * One published invitation at a time per account is the captain's decision of
+ * 2026-08-24, and it is the limit that carries the whole weight now that
+ * `/t/<templateId>/use` lets anybody mint unlimited copies of a free template.
+ * Every published event costs hosting for its full term; a draft costs nothing.
+ *
+ * This read is NOT the enforcement. `public.events_publish_limit` is
+ * (20260826010000_one_published_invitation.sql), because two publish presses in
+ * two tabs are two requests and a check in front of a write can be raced. This
+ * exists so that the buyer is told which invitation is in the way, by name,
+ * instead of being handed a database refusal.
+ *
+ * As the buyer, so `owner_id = (select auth.uid())` is what scopes it rather
+ * than a filter this file could forget. `null` means there is no other
+ * published invitation; a read that FAILS also answers null, and that is
+ * deliberate: the sentence a buyer gets then comes from the database refusing
+ * the write, which is the answer that is actually true.
+ */
+export type PublishedElsewhere = {
+  readonly id: string
+  readonly title: string
+  readonly slug: string
+}
+
+export async function otherPublishedEvent(
+  session: BuyerSession,
+  eventId: string
+): Promise<PublishedElsewhere | null> {
+  const response = await buyerGet(
+    session,
+    `events?${new URLSearchParams({
+      status: 'eq.published',
+      id: `neq.${eventId}`,
+      select: 'id,title,slug',
+      limit: '1',
+    }).toString()}`
+  )
+
+  if (!response.ok || !Array.isArray(response.json) || response.json.length === 0) return null
+
+  const parsed = z
+    .object({ id: z.string(), title: z.string(), slug: z.string() })
+    .safeParse(response.json[0])
+
+  return parsed.success ? parsed.data : null
+}
+
+/**
  * How many people have replied, exactly.
  *
  * `Prefer: count=exact` and `Content-Range`, rather than counting rows in the

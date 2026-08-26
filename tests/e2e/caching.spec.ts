@@ -5,6 +5,7 @@ import {
   TEMPLATE_PREVIEW_REVALIDATE_SECONDS,
   TEMPLATE_PREVIEW_STALE_WHILE_REVALIDATE_SECONDS,
 } from '@/lib/serving/cache'
+import { templateCopyPath } from '@/lib/activation/code'
 import { ASSET_PATH_PREFIX } from '@/lib/uploads'
 import { seedPreviewTemplate } from '../support/activation'
 import { signIn } from '../support/auth'
@@ -258,6 +259,30 @@ test.describe('the template preview cache headers', () => {
 
     // Same rule as the guest page: `immutable` is for content addressed assets.
     expect(header).not.toContain('immutable')
+  })
+
+  /*
+   * The copy link sits one segment inside the cached prefix and needs the exact
+   * opposite header, which is the shape of mistake a prefix rule makes silently.
+   * If it were cached, one visitor's answer would be served to the next: at best
+   * a sign-in form shown to somebody already signed in, at worst a redirect into
+   * an editor for an invitation belonging to whoever asked first.
+   */
+  test('the copy link inside that prefix is stored by nothing at all', async ({ request }) => {
+    const { templateId } = await seedPreviewTemplate()
+
+    const response = await request.get(templateCopyPath(templateId))
+    expect(response.status()).toBe(200)
+
+    const header = response.headers()['cache-control']
+    expect(header, 'the copy link carries no Cache-Control at all').toBeDefined()
+
+    const parsed = directives(header!)
+
+    expect(parsed.has('private')).toBe(true)
+    expect(parsed.has('no-store')).toBe(true)
+    expect(parsed.has('public')).toBe(false)
+    expect(parsed.has('s-maxage')).toBe(false)
   })
 })
 

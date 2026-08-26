@@ -342,6 +342,13 @@ States that are a function of the clock are not stored anywhere. `event_status`
 is publication, which a buyer controls; expiry is derived. `activation_code_status`
 has no `expired` value for the same reason.
 
+A buyer may hold as many events as they like and publish one of them.
+`public.events_publish_limit` refuses a second published row per owner for
+anything writing as `authenticated`, under an advisory lock on the owner so two
+tabs cannot both win. It is a trigger rather than a partial unique index because
+the platform's own service role is deliberately outside the rule; the whole
+argument, and why the limit exists at all, is in `docs/activation.md`.
+
 ## Activation codes
 
 The redemption flow is Phase 1. The schema is here now because a redeemable

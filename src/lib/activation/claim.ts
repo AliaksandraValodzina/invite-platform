@@ -2,17 +2,10 @@ import 'server-only'
 
 import { z } from 'zod'
 
-import { defaultQuestionRows } from '@/lib/rsvp/questions'
-import {
-  serviceDelete,
-  serviceGet,
-  servicePatch,
-  servicePost,
-  type ServiceResponse,
-} from '@/lib/supabase/service'
+import { serviceGet, servicePatch, servicePost, type ServiceResponse } from '@/lib/supabase/service'
 
 import { normaliseActivationCode } from './code'
-import { hostingExpiresAt } from './hosting'
+import { describeError, discardEvent, mintEvent } from './mint'
 
 /**
  * Spending a claim link: an Etsy order becomes an event the buyer owns.
@@ -28,6 +21,12 @@ import { hostingExpiresAt } from './hosting'
  * Nothing here changes the schema, and nothing here needed to. A code was
  * already a bearer token; putting it in a URL is a decision about where the
  * string is carried.
+ *
+ * This is the PAID route and it is not the only one any more. The free launch
+ * opened `/t/<templateId>/use`, which mints a copy for anybody who signs in
+ * (./copy.ts). The two share `./mint.ts` and nothing else: what is in this file
+ * is the code, the standing of a code, and the compare and set that spends one,
+ * none of which the open link has or should ever grow. See docs/activation.md.
  *
  * ## The code is never hashed in TypeScript
  *
@@ -108,7 +107,7 @@ export async function findActivationCode(plaintext: string): Promise<CodeLookup>
   try {
     hashed = await servicePost('rpc/hash_activation_code', { p_code: normalised })
   } catch (error) {
-    return { kind: 'unavailable', reason: describe(error) }
+    return { kind: 'unavailable', reason: describeError(error) }
   }
 
   if (!hashed.ok || typeof hashed.json !== 'string') {
@@ -126,7 +125,7 @@ export async function findActivationCode(plaintext: string): Promise<CodeLookup>
       { revalidate: false }
     )
   } catch (error) {
-    return { kind: 'unavailable', reason: describe(error) }
+    return { kind: 'unavailable', reason: describeError(error) }
   }
 
   if (!response.ok) {
@@ -190,44 +189,6 @@ export type ClaimResult =
   | { readonly kind: 'lapsed' }
   | { readonly kind: 'unavailable'; readonly reason: string }
 
-/** The placeholder an event is created with, before the buyer has filled it in. */
-export const NEW_EVENT_TITLE = 'Your invitation'
-
-/**
- * The placeholder date, and why it is deliberately a placeholder.
- *
- * `starts_at_local` and `time_zone` are NOT NULL and nobody knows the real
- * answer at the moment a code is spent, so something has to go in. Six months
- * out at four in the afternoon reads as a stand-in rather than as a date
- * somebody chose, and the event is created unpublished, so no guest can see it
- * before the buyer has replaced it. A neutral zone for the same reason: a
- * guessed one would be silently wrong by hours, and an obviously neutral one is
- * a question the editor's own control asks out loud.
- *
- * `Etc/UTC` and not `UTC`, and the difference is not cosmetic. Two gates have to
- * be cleared and they disagree: `pg_timezone_names` has both, and this app's
- * `isSupportedTimeZone` requires an `Area/Location` name because the countdown
- * resolves through `Intl`. Bare `UTC` inserts happily and then leaves the
- * buyer's own page serving a "could not be loaded" notice, because the schedule
- * never resolves. `tests/unit/activation/claim-defaults.test.ts` holds this to
- * both gates.
- */
-export const NEW_EVENT_DAYS_AHEAD = 180
-export const NEW_EVENT_HOUR = 16
-export const NEW_EVENT_TIME_ZONE = 'Etc/UTC'
-
-const DAY_MS = 86_400_000
-
-/** `2027-03-14T16:00:00`, which is the shape `events.starts_at_local` holds. */
-export function placeholderStart(now: Date = new Date()): string {
-  const day = new Date(now.getTime() + NEW_EVENT_DAYS_AHEAD * DAY_MS)
-  const pad = (part: number) => String(part).padStart(2, '0')
-  return (
-    `${day.getUTCFullYear()}-${pad(day.getUTCMonth() + 1)}-${pad(day.getUTCDate())}` +
-    `T${pad(NEW_EVENT_HOUR)}:00:00`
-  )
-}
-
 /**
  * Spends a code for a signed-in buyer, or says why it could not be spent.
  *
@@ -247,19 +208,23 @@ export async function claimForBuyer(
   if (standing === 'lapsed') return { kind: 'lapsed' }
   if (standing === 'spent') return alreadySpent(code, buyerId)
 
-  const version = await templateDefinitionVersion(code.templateId)
-  if (version === null) {
-    return { kind: 'unavailable', reason: 'the template this code names could not be read' }
-  }
-
-  let created: string
-  try {
-    const event = await createEvent(code, buyerId, version, now)
-    if ('reason' in event) return { kind: 'unavailable', reason: event.reason }
-    created = event.eventId
-  } catch (error) {
-    return { kind: 'unavailable', reason: describe(error) }
-  }
+  /*
+   * The event, its question set and its first content revision, minted by the
+   * module the open copy link shares (./mint.ts). What stays here is what is
+   * about the CODE: the compare and set below, and taking the event back when
+   * this request turns out not to own it.
+   */
+  const event = await mintEvent(
+    {
+      ownerId: buyerId,
+      templateId: code.templateId,
+      tier: code.tier,
+      hostingMonths: code.hostingMonths,
+    },
+    now
+  )
+  if (event.kind === 'failed') return { kind: 'unavailable', reason: event.reason }
+  const created = event.eventId
 
   let claimed: ServiceResponse
   try {
@@ -275,7 +240,7 @@ export async function claimForBuyer(
     )
   } catch (error) {
     await discardEvent(created)
-    return { kind: 'unavailable', reason: describe(error) }
+    return { kind: 'unavailable', reason: describeError(error) }
   }
 
   if (claimed.ok && Array.isArray(claimed.json) && claimed.json.length === 1) {
@@ -331,142 +296,4 @@ async function rereadCode(id: string): Promise<ActivationCode | null> {
 
   const parsed = codeRowSchema.safeParse(response.json[0])
   return parsed.success ? readCode(parsed.data) : null
-}
-
-async function templateDefinitionVersion(templateId: string): Promise<number | null> {
-  let response: ServiceResponse
-  try {
-    response = await serviceGet(
-      `templates?${new URLSearchParams({
-        id: `eq.${templateId}`,
-        select: 'id,definition_version',
-        limit: '1',
-      }).toString()}`,
-      { revalidate: false }
-    )
-  } catch {
-    return null
-  }
-
-  if (!response.ok || !Array.isArray(response.json) || response.json.length === 0) return null
-
-  const parsed = z.object({ definition_version: z.number() }).safeParse(response.json[0])
-  return parsed.success ? parsed.data.definition_version : null
-}
-
-/**
- * The event, its question set and its first content revision.
- *
- * Three writes and no transaction, so the failure of any one of them takes the
- * others back rather than leaving a half-made invitation somebody has paid for.
- * The code has not been spent at this point, so the buyer's link still works and
- * a second click makes a whole one.
- *
- * The question rows come from `defaultQuestionRows`, which is the same list
- * `scripts/seed-event.ts` uses. `scripts/seed-event.ts` says why in its own
- * words: the first thing that would drift between two copies of that list is a
- * `pii_class`, which decides what the retention sweep erases.
- *
- * `grace_ends_at` is not sent. `events_before_write` defaults it to hosting
- * expiry plus thirty days, and a second sum here would be a second answer to
- * when a page stops serving.
- */
-async function createEvent(
-  code: ActivationCode,
-  buyerId: string,
-  definitionVersion: number,
-  now: Date
-): Promise<{ readonly eventId: string } | { readonly reason: string }> {
-  const minted = await servicePost('rpc/mint_event_slug', { p_title: NEW_EVENT_TITLE })
-  if (!minted.ok || typeof minted.json !== 'string') {
-    return { reason: `a link for the invitation could not be minted (${minted.status})` }
-  }
-
-  const created = await servicePost(
-    'events',
-    {
-      owner_id: buyerId,
-      template_id: code.templateId,
-      template_definition_version: definitionVersion,
-      slug: minted.json,
-      title: NEW_EVENT_TITLE,
-      // Draft, always. An invitation carrying a placeholder date and the
-      // template's example names is not something to put in front of a guest,
-      // and publishing is the buyer's own decision either way.
-      status: 'draft',
-      tier: code.tier,
-      starts_at_local: placeholderStart(now),
-      ends_at_local: null,
-      time_zone: NEW_EVENT_TIME_ZONE,
-      hosting_expires_at: hostingExpiresAt(now, code.hostingMonths).toISOString(),
-    },
-    { prefer: 'return=representation' }
-  )
-
-  if (!created.ok || !Array.isArray(created.json) || created.json.length === 0) {
-    return { reason: `the invitation could not be created (${created.detail})` }
-  }
-
-  const parsed = z.object({ id: z.string() }).safeParse(created.json[0])
-  if (!parsed.success) return { reason: 'the invitation was created but could not be read back' }
-
-  const eventId = parsed.data.id
-
-  const questions = await servicePost('rsvp_questions', defaultQuestionRows(eventId, buyerId), {
-    prefer: 'return=minimal',
-  })
-  if (!questions.ok) {
-    await discardEvent(eventId)
-    return { reason: `the reply form could not be created (${questions.detail})` }
-  }
-
-  /*
-   * Revision 1, published and empty. Empty is right: content is overrides, and a
-   * buyer who has changed nothing has overridden nothing. Published is what
-   * makes the event servable the moment they press publish, because a published
-   * event with no published revision is a designed "unavailable" notice rather
-   * than a page (src/lib/supabase/events.ts).
-   */
-  const content = await servicePost(
-    'event_content',
-    {
-      owner_id: buyerId,
-      event_id: eventId,
-      revision: 1,
-      is_published: true,
-      content_version: 1,
-      content: { version: 1, blocks: {} },
-      theme: { version: 1, tokens: {} },
-    },
-    { prefer: 'return=minimal' }
-  )
-  if (!content.ok) {
-    await discardEvent(eventId)
-    return { reason: `the invitation's content could not be created (${content.detail})` }
-  }
-
-  return { eventId }
-}
-
-/**
- * Takes back an event this request created and could not pay for.
- *
- * Failure is swallowed, and that is the right way round: the caller is already
- * on its way to telling somebody their claim did not work, and an exception
- * here would replace that sentence with a stack trace. What is left behind is a
- * draft event with no reply, owned by the buyer, which their dashboard shows as
- * an unpublished invitation rather than as damage.
- */
-async function discardEvent(eventId: string): Promise<void> {
-  try {
-    await serviceDelete(`events?id=eq.${encodeURIComponent(eventId)}`, {
-      prefer: 'return=minimal',
-    })
-  } catch {
-    /* see above */
-  }
-}
-
-function describe(error: unknown): string {
-  return error instanceof Error ? error.message : 'the database could not be reached'
 }
