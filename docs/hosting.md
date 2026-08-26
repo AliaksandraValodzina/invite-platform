@@ -203,6 +203,119 @@ it again from a claim link and confirm it lands on the invitation rather than
 the dashboard. A minted `token_hash` link proves the app and says nothing about
 the template; only a link out of a mailbox proves both.
 
+### The sending address cannot receive a reply, and no setting changes that
+
+A buyer who has just paid and hit a problem replies to the email they were
+sent. That is what people do, and nothing in the product tells them not to.
+The reply goes to whatever address is in `From:`, which is the custom SMTP
+sender email, which is an address at `send.mirthly.app`. Nobody reads it.
+
+The cheap fix everybody reaches for first is a `Reply-To` header pointing at an
+address the captain already has. **Supabase cannot express one.** This was
+checked rather than assumed, three ways, and all three agree:
+
+- The Supabase CLI's own config schema for `[auth.email.smtp]` is a closed set:
+  `enabled`, `host`, `port`, `user`, `pass`, `admin_email`, `sender_name`.
+  There is no reply field, and `supabase config push` is the same interface the
+  dashboard writes to.
+- The Management API's auth config exposes exactly `smtp_admin_email`,
+  `smtp_host`, `smtp_max_frequency`, `smtp_pass`, `smtp_port`,
+  `smtp_sender_name`, `smtp_user`. Same closed set, same absence.
+- The auth service binary contains no `Reply-To` string at all. Its mailer
+  config is an admin email and a sender name. A header it never writes cannot
+  be turned on from outside.
+
+The last one is the honest test, so it was run. Ask the local stack for a magic
+link and read the raw message the auth service handed to SMTP:
+
+```
+From: "Admin" <admin@email.com>
+To: buyer-test@example.com
+Subject: Your sign-in link
+Content-Type: text/html; charset=UTF-8
+```
+
+`From:`, `To:`, `Subject:`, a content type, and a body. No `Reply-To:`. The
+email template is not a way in either: a template is a subject and a body, and
+the body is what you see above the fold of that message. Headers are not part
+of it.
+
+Relaying through Resend does not add one. Resend passes through custom headers
+the SMTP client sets, and the auth service sets none, so there is nothing to
+pass through. Resend has no account-level or domain-level default reply address.
+
+So for sign-in mail, option (a) is not available. That is the whole finding.
+
+**The other kind of mail is a different answer, and it has no problem yet.**
+Anything the app sends itself would go through Resend's API rather than
+Supabase, and that API does take `reply_to`, plus arbitrary `headers`. The app
+sends nothing today: there is no Resend SDK in `package.json`, and no mail call
+anywhere in `src/`. So there is no reply to lose on that path, and when the
+first one is written it can carry a reply address on the day it is written.
+
+### Where a reply actually lands today
+
+Read off the live DNS, which is Namecheap's `registrar-servers.com`:
+
+| Name                                 | What is published                  |
+| ------------------------------------ | ---------------------------------- |
+| `resend._domainkey.send.mirthly.app` | DKIM key, so sending is set up     |
+| `send.mirthly.app` `MX`              | nothing (`NOERROR`, no answer)     |
+| `send.mirthly.app` `A`               | nothing                            |
+| `mirthly.app` `MX`                   | nothing                            |
+| `_dmarc.mirthly.app`                 | `v=DMARC1; p=none;` with no `rua=` |
+
+With no `MX` and no `A` to fall back to, a reply to `send.mirthly.app` cannot
+be delivered anywhere. The buyer gets a bounce; the captain hears nothing. The
+silence is on our side of it, which is the part that matters: somebody told us
+their invitation was broken and we did not find out.
+
+Two smaller things fall out of reading those records. The checklist above asks
+for an `MX` and an SPF `TXT` on `send`, and neither is published. And the
+`_dmarc` record has no `rua=`, so the reports it asks for are also going
+nowhere. Neither is this document's task and neither is fixed here.
+
+### What only the captain can do
+
+The choice is the captain's because it decides where their business mail lands,
+and every route to it needs either an address only they have or a DNS record
+only they should touch.
+
+1. **Name the address replies should reach.** Everything below needs it and
+   nothing can guess it. It can be the address already used for the Etsy shop.
+2. **Pick one of these.** They are ordered by what they cost.
+
+   **Forwarding at Namecheap.** The registrar already hosts the DNS and offers
+   email forwarding on a domain it holds. Point an address at the existing
+   inbox. Cost is nothing; the work is one `MX` change. The address a buyer
+   would reply to is at `send.mirthly.app`, so the forwarding has to be set up
+   for that name and has to sit alongside the bounce `MX` the sending checklist
+   asks for. That `MX` is not published yet, so this is a decision about what
+   goes in an empty slot rather than a conflict to untangle.
+
+   **Resend Inbound.** Same account as sending, so nothing new to sign up for.
+   It needs its own `MX`, and Resend's guidance is to receive on a subdomain
+   separate from the one that sends. Forwarding to an existing inbox is not a
+   setting: it is a webhook and a POST route in this app that reads the message
+   and sends it on. More moving parts than the problem has.
+
+   **Mail hosting on the domain.** A real mailbox, a recurring cost and an
+   account to run. More than a one-person shop needs, and it is listed here
+   only so the cheaper two are visibly cheaper.
+
+3. **Tell the buyer where to write, whichever is chosen.** The sign-in email is
+   the only mail Mirthly sends and it names no contact at all
+   (`supabase/templates/magic-link.html`). A line naming a real address is
+   worth more than a `Reply-To` header, because it survives a buyer who
+   forwards the mail or writes from a different account. It is one sentence in
+   that template and it is the fastest half of this to land, but it needs the
+   address from step 1, so it is not written here. Inventing one would ship a
+   dead address into a paid buyer's inbox, which is the failure this task
+   exists to remove.
+4. **Prove it with a real reply, not a configuration screen.** Send a sign-in
+   link to a mailbox, hit reply, and confirm it arrives. That is the only check
+   that distinguishes a route that works from one that looks right.
+
 ## Migrations reach a hosted project the same way they reach a local one
 
 `supabase link --project-ref <ref>` then `supabase db push`. Check first with
