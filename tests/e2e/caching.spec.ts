@@ -364,4 +364,31 @@ test.describe('the dashboard cache headers', () => {
     expect(parsed.has('public')).toBe(false)
     expect(parsed.has('s-maxage')).toBe(false)
   })
+
+  test('a typed order number is never stored by anything either', async ({ request }) => {
+    /*
+     * The third secret in a URL, and the newest. `/order/<number>` carries the
+     * buyer's Etsy order number and the response says whether that purchase has
+     * been used, so a shared cache holding it would tell the next visitor to
+     * help themselves. The form one segment up is in the same prefix on
+     * purpose: it reads a session, and a prefix rule that had to tell the two
+     * apart is the shape of mistake that fails silently.
+     *
+     * The number below is a real shape and belongs to nobody. What is asserted
+     * is the header on the route.
+     */
+    for (const path of ['/order', '/order/3812457901']) {
+      const response = await request.get(path)
+
+      const header = response.headers()['cache-control']
+      expect(header, `${path} carries no Cache-Control at all`).toBeDefined()
+
+      const parsed = directives(header!)
+
+      expect(parsed.has('no-store'), path).toBe(true)
+      expect(parsed.has('private'), path).toBe(true)
+      expect(parsed.has('public'), path).toBe(false)
+      expect(parsed.has('s-maxage'), path).toBe(false)
+    }
+  })
 })

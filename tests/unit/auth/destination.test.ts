@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest'
 
 import { templateCopyPath } from '@/lib/activation/code'
 import {
+  MAX_ORDER_NUMBER_LENGTH,
+  MIN_ORDER_NUMBER_LENGTH,
+  orderPath,
+} from '@/lib/activation/order-number'
+import {
   CLAIM_COOKIE,
   DASHBOARD_DESTINATION,
   NEXT_PARAM,
@@ -41,6 +46,46 @@ describe('what counts as a destination', () => {
 
     expect(path).toBe('/t/4f6a2c1e-9b3d-4a7f-8c21-0d5e6f7a8b90/use')
     expect(safeDestination(path)).toBe(path)
+  })
+
+  /*
+   * The typed order number. Same argument as the copy link above: the path is
+   * built in one place and admitted in another, and a buyer who lost it across
+   * the mailbox arrives signed in having paid and received nothing. The
+   * builder normalises, so the admitted string is uppercase with no separators
+   * however the buyer typed it.
+   */
+  it('accepts a typed order number, and takes the path from the builder', () => {
+    const path = orderPath('#3812-457901')
+
+    expect(path).toBe('/order/3812457901')
+    expect(safeDestination(path)).toBe(path)
+  })
+
+  it('accepts an order number at both ends of the length the builder allows', () => {
+    for (const length of [MIN_ORDER_NUMBER_LENGTH, MAX_ORDER_NUMBER_LENGTH]) {
+      const path = orderPath('7'.repeat(length))
+      expect(safeDestination(path), path).toBe(path)
+    }
+  })
+
+  it('refuses the order form itself, which redeems nothing', () => {
+    expect(safeDestination('/order')).toBeNull()
+  })
+
+  it('refuses an order path that is not one the builder makes', () => {
+    for (const hostile of [
+      '/order/../dashboard',
+      '/order/3812457901/../../evil',
+      '/order/3812457901?next=//evil.test',
+      // Lowercase and separators never survive normalisation, so a path
+      // carrying them was composed by somebody else.
+      '/order/3812-457901',
+      '/order/abc',
+      `/order/${'7'.repeat(MAX_ORDER_NUMBER_LENGTH + 1)}`,
+    ]) {
+      expect(safeDestination(hostile), hostile).toBeNull()
+    }
   })
 
   it('refuses the preview itself, which creates nothing and needs no session', () => {

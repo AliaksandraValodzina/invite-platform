@@ -19,9 +19,14 @@ import { mintEvent } from './mint'
  *
  * An open copy link plus a price is a free product. This must not still be the
  * active route when the first PAID listing publishes.
- * `ip-decision-order-verification` is the captain-held decision that replaces
- * it and it is still open. `/claim/<code>` and `activation_codes` are untouched
- * and stay the paid route, ready for the day the captain charges.
+ *
+ * `ip-decision-order-verification` was the decision that replaces it, and it is
+ * now taken and built: the buyer types their Etsy order number at `/order` and
+ * it is checked against the captain's own list (src/lib/activation/order.ts,
+ * docs/orders.md). So what is left here is a WITHDRAWAL rather than a decision:
+ * take this route out, and take the account creation in its sign-in action out
+ * with it. `/claim/<code>` and `activation_codes` stay either way, as the route
+ * the captain uses when an order has gone wrong.
  *
  * ## What holds the line while it is open
  *
