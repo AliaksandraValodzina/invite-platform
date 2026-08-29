@@ -38,6 +38,7 @@ const TABLES = [
   'rsvp_questions',
   'rsvp_answers',
   'activation_codes',
+  'order_numbers',
   'uploads',
 ]
 
@@ -153,6 +154,7 @@ const created = {
   rsvp: null,
   upload: null,
   activationCode: null,
+  orderNumber: null,
 }
 
 /**
@@ -164,6 +166,16 @@ const created = {
  * can name is a row every denial passes against by accident.
  */
 const PROBE_CODE = 'PROBE-CODE-ANON-ACCESS'
+
+/**
+ * The plaintext of the probe's Etsy order number.
+ *
+ * A number on `order_numbers` is what opens a paid template, so it is the same
+ * kind of thing as the code above with one difference that matters here: it is
+ * short and enumerable, so the denials below are the only thing between a
+ * stolen dump and a stack of unclaimed purchases.
+ */
+const PROBE_ORDER = '9900112233'
 
 async function seed() {
   const owner = await auth('admin/users', {
@@ -324,6 +336,33 @@ async function seed() {
   if (!code.ok) throw new Error(`seeding the activation code failed: ${describe(code)}`)
   created.activationCode = code.json[0]
 
+  /*
+   * An unclaimed order number, so the denials below are denials rather than an
+   * empty table. A stranger who could read this row, or mark it redeemed
+   * against their own account, would have taken somebody's purchase.
+   */
+  const orderHash = await rest('rpc/hash_order_number', {
+    ...svc,
+    method: 'POST',
+    body: { p_number: PROBE_ORDER },
+  })
+  if (!orderHash.ok) throw new Error(`hashing the probe order failed: ${describe(orderHash)}`)
+
+  const order = await rest('order_numbers', {
+    ...svc,
+    method: 'POST',
+    prefer: 'return=representation',
+    body: {
+      owner_id: owner.id,
+      template_id: created.template.id,
+      number_hash: orderHash.json,
+      number_suffix: PROBE_ORDER.slice(-4),
+      hosting_months: 12,
+    },
+  })
+  if (!order.ok) throw new Error(`seeding the order number failed: ${describe(order)}`)
+  created.orderNumber = order.json[0]
+
   return {
     owner,
     stranger,
@@ -333,6 +372,8 @@ async function seed() {
 }
 
 async function cleanup() {
+  if (created.orderNumber)
+    await rest(`order_numbers?id=eq.${created.orderNumber.id}`, { ...svc, method: 'DELETE' })
   if (created.activationCode)
     await rest(`activation_codes?id=eq.${created.activationCode.id}`, { ...svc, method: 'DELETE' })
   if (created.event) await rest(`events?id=eq.${created.event.id}`, { ...svc, method: 'DELETE' })
@@ -445,6 +486,52 @@ async function main() {
     !anonHash.ok,
     describe(anonHash)
   )
+
+  // Order numbers, which are the same kind of secret with a shorter alphabet.
+  // A client that could list unclaimed ones could help itself to every order
+  // the captain has loaded and not yet had claimed.
+  const anonOrders = await rest('order_numbers?select=number_hash,number_suffix', anon)
+  check(
+    'anon cannot read order numbers, not even their hashes',
+    denied(anonOrders),
+    describe(anonOrders)
+  )
+
+  const anonOrderById = await rest(`order_numbers?select=*&id=eq.${created.orderNumber.id}`, anon)
+  check(
+    'anon cannot read the seeded order number by id',
+    denied(anonOrderById),
+    describe(anonOrderById)
+  )
+
+  const anonOrderHash = await rest('rpc/hash_order_number', {
+    ...anon,
+    method: 'POST',
+    body: { p_number: PROBE_ORDER },
+  })
+  check(
+    'anon cannot ask the database what an order number hashes to either',
+    !anonOrderHash.ok,
+    describe(anonOrderHash)
+  )
+
+  /*
+   * The throttle is the only defence against guessing a ten digit number, so a
+   * client that could write to it could clear its own budget or fill somebody
+   * else's, and one that could read it would be reading a log of who typed what.
+   */
+  for (const rpc of ['note_order_number_miss', 'order_number_misses']) {
+    const anonThrottle = await rest(`rpc/${rpc}`, {
+      ...anon,
+      method: 'POST',
+      body: { p_client: '203.0.113.9' },
+    })
+    check(
+      `anon cannot call ${rpc}: the guessing cap is a service role path`,
+      !anonThrottle.ok,
+      describe(anonThrottle)
+    )
+  }
 
   console.log('\nAn anonymous client can write nothing')
   const anonInsertEvent = await rest('events', {
@@ -602,6 +689,7 @@ async function main() {
     'templates',
     'event_content',
     'activation_codes',
+    'order_numbers',
     'uploads',
   ]) {
     const result = await rest(`${table}?select=*`, { key: config.anonKey, token: strangerToken })
@@ -663,6 +751,46 @@ async function main() {
     'a signed-in stranger cannot ask the database what a code hashes to either',
     !strangerHash.ok,
     describe(strangerHash)
+  )
+
+  /*
+   * The same for a typed order number, and it matters more here: the number is
+   * short enough to guess, so a stranger who could mark one redeemed against
+   * their own account would have taken a purchase somebody is about to claim.
+   */
+  const strangerTakeOrder = await rest(`order_numbers?id=eq.${created.orderNumber.id}`, {
+    key: config.anonKey,
+    token: strangerToken,
+    method: 'PATCH',
+    body: {
+      status: 'redeemed',
+      redeemed_by: created.users[1],
+      redeemed_at: new Date().toISOString(),
+      redeemed_event_id: created.event.id,
+    },
+  })
+  const orderAfter = await rest(
+    `order_numbers?select=status,redeemed_by&id=eq.${created.orderNumber.id}`,
+    svc
+  )
+  check(
+    'a signed-in stranger cannot redeem somebody else order number',
+    orderAfter.ok &&
+      orderAfter.json?.[0]?.status === 'issued' &&
+      orderAfter.json?.[0]?.redeemed_by === null,
+    `patch: ${describe(strangerTakeOrder)} / after: ${describe(orderAfter)}`
+  )
+
+  const strangerOrderHash = await rest('rpc/hash_order_number', {
+    key: config.anonKey,
+    token: strangerToken,
+    method: 'POST',
+    body: { p_number: PROBE_ORDER },
+  })
+  check(
+    'a signed-in stranger cannot ask the database what an order number hashes to either',
+    !strangerOrderHash.ok,
+    describe(strangerOrderHash)
   )
 
   const strangerSteal = await rest(`events?id=eq.${created.event.id}`, {

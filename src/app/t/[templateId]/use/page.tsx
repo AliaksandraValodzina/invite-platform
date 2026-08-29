@@ -20,10 +20,11 @@ import { CopySignIn } from './copy-sign-in'
  * **This route is deliberately temporary and must not outlive the free launch.**
  * An open copy link plus a price is a free product, so this must not still be
  * the active route when the first PAID listing publishes.
- * `ip-decision-order-verification` is the captain-held decision that replaces
- * it, and it is still open. `/claim/<code>`, `scripts/issue-codes.ts` and
- * `activation_codes` are untouched and are the paid route the day the captain
- * charges. See src/lib/activation/copy.ts and docs/activation.md.
+ * `ip-decision-order-verification` was the decision that replaces it and it is
+ * now built: `/order` takes a typed Etsy order number and checks it against the
+ * captain's own list (docs/orders.md). What is left here is a withdrawal, not a
+ * decision. `/claim/<code>`, `scripts/issue-codes.ts` and `activation_codes`
+ * are untouched. See src/lib/activation/copy.ts and docs/activation.md.
  *
  * ## The preview keeps no door in front of it
  *

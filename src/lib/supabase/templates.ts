@@ -34,8 +34,9 @@ import { serviceGet } from './service'
  * the sales pitch free of a door.
  *
  * The open copy link is the free launch's route and is deliberately temporary.
- * It must be replaced before the first PAID listing publishes, because an open
- * copy link plus a price is a free product. See docs/activation.md.
+ * It must be withdrawn before the first PAID listing publishes, because an open
+ * copy link plus a price is a free product. What replaces it is built: a typed
+ * Etsy order number at `/order` (docs/orders.md). See docs/activation.md.
  */
 
 /** Matches the uuid `templates.id` holds, so a junk path costs no query. */

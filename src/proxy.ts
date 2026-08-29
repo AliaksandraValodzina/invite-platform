@@ -53,7 +53,7 @@ import {
  */
 
 export const config = {
-  matcher: ['/e/:slug*', '/dashboard/:path*', '/claim/:path*', '/t/:path*'],
+  matcher: ['/e/:slug*', '/dashboard/:path*', '/claim/:path*', '/order/:path*', '/t/:path*'],
 }
 
 /**
@@ -69,8 +69,17 @@ export const config = {
  * response says whether that token is still worth anything. Neither belongs in
  * a shared cache, and `private, no-store` is the same sentence the dashboard
  * needs for a different reason.
+ *
+ * `/order/*` is here for both halves of the same argument. `/order/<number>`
+ * carries the buyer's Etsy order number in its path and answers whether that
+ * purchase has been used, which no shared cache may hold; a cached "still
+ * unclaimed" is a page telling the next visitor to help themselves. `/order`
+ * itself is the form, and it is in the prefix rather than exempted from it
+ * because it reads a session too: a buyer who is already signed in must be
+ * carried straight into their invitation rather than asked for their email
+ * again on a page that has just recognised their purchase.
  */
-const SESSION_PATHS = ['/dashboard', '/claim']
+const SESSION_PATHS = ['/dashboard', '/claim', '/order']
 
 /**
  * `/t/<templateId>/use`, the free launch's open copy link.

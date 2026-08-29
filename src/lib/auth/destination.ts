@@ -75,19 +75,27 @@ export const CLAIM_COOKIE_MAX_AGE = 60 * 30
  *                           message and spent once
  *   `/t/<templateId>/use`   the free launch's open copy link, which anybody may
  *                           hold (src/lib/activation/copy.ts)
+ *   `/order/<number>`       a paid purchase proved by the order number the buyer
+ *                           typed (src/lib/activation/order.ts)
  *
- * Losing either one across the mailbox is the same failure with two different
- * costs. On the paid link somebody arrives signed in having paid and received
- * nothing. On the free link they arrive signed in at an empty dashboard having
- * pressed "make this mine" on an invitation they can no longer see, which is
- * losing them entirely: nobody presses it a second time.
+ * Losing one across the mailbox is the same failure with different costs. On
+ * the paid links somebody arrives signed in having paid and received nothing.
+ * On the free link they arrive signed in at an empty dashboard having pressed
+ * "make this mine" on an invitation they can no longer see, which is losing
+ * them entirely: nobody presses it a second time.
  *
  * `/dashboard` is here so that the fallback is expressible as a destination
  * rather than as a special case.
+ *
+ * The order shape is built by `orderPath` in src/lib/activation/order-number.ts,
+ * which normalises to uppercase letters and digits and refuses anything outside
+ * MIN_ORDER_NUMBER_LENGTH..MAX_ORDER_NUMBER_LENGTH. This pattern says the same
+ * thing, and tests/unit/auth/destination.test.ts holds the two together.
  */
 const ALLOWED_DESTINATIONS: readonly RegExp[] = [
   /^\/claim\/[A-Za-z0-9-]{1,80}$/,
   /^\/t\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/use$/i,
+  /^\/order\/[A-Z0-9]{6,24}$/,
   /^\/dashboard$/,
 ]
 

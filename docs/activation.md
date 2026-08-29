@@ -7,22 +7,30 @@ hand and becomes a product.
 The code is `src/lib/activation/` (pure and service role), `src/app/claim/[code]/`
 (the single use link), `src/app/t/[templateId]/` (the public preview) and
 `src/app/t/[templateId]/use/` (the free launch's open copy link),
-`scripts/issue-codes.ts` (what the captain runs), and the publish and confirm
-halves of `src/app/dashboard/[id]/edit/`. Start at `docs/data-model.md` for what
-an activation code is, and `docs/editing.md` for what a buyer does after they
-have one.
+`src/app/order/` (the typed order number, whose own document is
+`docs/orders.md`), `scripts/issue-codes.ts` and `scripts/load-orders.ts` (what
+the captain runs), and the publish and confirm halves of
+`src/app/dashboard/[id]/edit/`. Start at `docs/data-model.md` for what an
+activation code is, and `docs/editing.md` for what a buyer does after they have
+one.
 
-## Three links, and they must never be conflated
+## Four links, and they must never be conflated
 
-| Link                  | What it does                                                   | Who may hold it                                                              |
-| --------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `/t/<templateId>`     | Renders a template read only. Copies nothing, creates nothing. | Anybody. It belongs in the Etsy listing and on social, and it should spread. |
-| `/t/<templateId>/use` | Creates the visitor's own copy, behind sign-in. Not spent.     | Anybody. **Free launch only.** See the gate below.                           |
-| `/claim/<code>`       | Creates the buyer's own copy, then is spent.                   | One buyer, delivered in the Etsy order message.                              |
+| Link                  | What it does                                                                                              | Who may hold it                                                              |
+| --------------------- | --------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `/t/<templateId>`     | Renders a template read only. Copies nothing, creates nothing.                                            | Anybody. It belongs in the Etsy listing and on social, and it should spread. |
+| `/t/<templateId>/use` | Creates the visitor's own copy, behind sign-in. Not spent.                                                | Anybody. **Free launch only.** See the gate below.                           |
+| `/claim/<code>`       | Creates the buyer's own copy, then is spent.                                                              | One buyer, delivered in the Etsy order message.                              |
+| `/order`              | Takes a typed Etsy order number, checks it against the captain's list, creates the buyer's own copy once. | Anybody may open it; only a listed order gets through. `docs/orders.md`.     |
 
 They are separate files, separate reads and separate cache headers.
 `tests/e2e/activation.spec.ts` asserts of the preview that the events table did
-not grow, and `tests/e2e/open-copy-link.spec.ts` walks the copy link.
+not grow, `tests/e2e/open-copy-link.spec.ts` walks the copy link, and
+`tests/e2e/order-number.spec.ts` walks the typed number.
+
+`/claim/<code>` and `/order` are both the paid route and both stay live. A code
+is what the captain sends when something has gone wrong with an order; a typed
+number is what everybody else uses.
 
 ### Why the middle row exists, and why it used to be forbidden
 
@@ -42,11 +50,18 @@ can put on an Etsy listing.
 
 **`/t/<templateId>/use` must not still be the active route when the first PAID
 listing publishes.** An open copy link plus a price is a free product.
-`ip-decision-order-verification` is the captain-held decision that replaces it
-and it is still open. This is why `/claim/<code>`, `scripts/issue-codes.ts` and
-the `activation_codes` table are untouched: they are the paid route the day the
-captain charges, and deleting them because they are currently unused would be
-the expensive kind of tidying.
+
+`ip-decision-order-verification` was the captain-held decision that replaces it,
+and it is now **taken and built**: the buyer types their Etsy order number at
+`/order`, and it is checked against a list the captain loads from their own
+dashboard (`docs/orders.md`). So the thing that has to happen before the first
+paid listing is now a withdrawal rather than a decision: take this route out,
+and take the account creation in its sign-in action out with it.
+
+`/claim/<code>`, `scripts/issue-codes.ts` and the `activation_codes` table are
+untouched by that work and stay: they are what the captain sends when something
+has gone wrong with an order, and deleting them because a second paid route
+exists would be the expensive kind of tidying.
 
 The route says so in `src/app/t/[templateId]/use/page.tsx` and
 `src/lib/activation/copy.ts`, which is where somebody about to change it will be
@@ -231,6 +246,7 @@ they are the two authorisations this product recognises for becoming a customer:
 
 - **holding an unspent activation**, on `/claim/<code>`
 - **a published template offered free**, on `/t/<templateId>/use`
+- **a purchase on the captain's own list**, on `/order/<number>` (`docs/orders.md`)
 
 The second is the free launch's, and it is the half of that route which also has
 to be taken back when the first paid listing publishes, not just the copy
